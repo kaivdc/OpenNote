@@ -13,8 +13,12 @@
 #include <cstring>
 #include <cstdlib>
 #include <vector>
+#include <nlohmann/json.hpp>
+
+#include "BoardStructs.h"
 
 using namespace std;
+using json = nlohmann::json;
 
 #define PORT 5432 // port we're listening on
 #define MAX_LINE 256
@@ -23,6 +27,10 @@ fd_set master; // master file descriptor list
 int listener;  // listening socket descriptor
 int fdmax;
 mutex masterMutex; // guards master/fdmax across threads
+
+std::unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
+std::unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a active boardID
+std::mutex stateMutex;
 
 // the child thread
 void ChildThread(long childSocket)
@@ -77,7 +85,7 @@ void ChildThread(long childSocket)
                             cout << "[SERVER] : Received EDIT_CONTENT:" << payloadStr << "\n";
                             break;
                         case 0x04: // CREATE_CARD
-                            cout << "[SERVER] : Received CREATE_CARD:" << payloadStr << "\n";
+                            handleCreateCard(childSocket, payloadStr);
                             break;
                         case 0x05: // DELETE_CARD
                             cout << "[SERVER] : Received DELETE_CARD:" << payloadStr << "\n";
@@ -227,4 +235,143 @@ int main(void)
         }
     }
     return 0;
+}
+
+BoardState* getBoardForSocketLocked(int clientSocket) {
+    auto clientIt = clientBoardMap.find(clientSocket);
+    if (clientIt == clientBoardMap.end()) {
+        return nullptr;
+    }
+    
+    auto boardIt = activeBoards.find(clientIt->second);
+    if (boardIt == activeBoards.end()) {
+        return nullptr;
+    }
+    
+    return &(boardIt->second);
+}
+
+// ADD: Save to SQL database & Broadcast to connected clients
+void handleCreateCard(int clientSocket, const string& payloadStr) {
+    try {
+        auto jsonParsed = json::parse(payloadStr);
+
+        Card newCard;
+        newCard.cardID = jsonParsed.value("cardID", 0);
+        newCard.x = jsonParsed.value("x", 0.0f);
+        newCard.y = jsonParsed.value("y", 0.0f);
+        newCard.width = jsonParsed.value("width", 100.0f);
+        newCard.height = jsonParsed.value("height", 100.0f);
+        newCard.text = jsonParsed.value("text", "");
+
+        if (!newCard.isValid()) {
+            sendError(clientSocket, 400, "Invalid card structure or text length.");
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(stateMutex);
+
+        BoardState* board = getBoardForSocketLocked(clientSocket);
+        if (!board) {
+            sendError(clientSocket, 403, "Client is not synced to an active board.");
+            return;
+        }
+
+        board->cards[newCard.cardID] = newCard;
+
+        cout << "[SERVER] : Created card ID " << newCard.cardID << "in Board" << board->boardID << "\n";
+    } catch (const nlohmann::json::parse_error& e) {
+        sendError(clientSocket, 400, "Malformed JSON in CREATE_CARD.");
+    }
+}
+
+void handleDeleteCard(int clientSocket, const string& payloadStr) {
+    
+}
+
+void handleEditCard(int clientSocket, const string& payloadStr) {
+    try {
+        auto jsonParsed = json::parse(payloadStr);
+
+        Card updatedCard;
+
+        uint32_t cardID = jsonParsed.value("cardID", 0);
+        if (cardID == 0) {
+            sendError(clientSocket, 400, "Missing or invalid cardID for edit.");
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(stateMutex);
+
+        BoardState* board = getBoardForSocketLocked(clientSocket);
+        if (!board) {
+            sendError(clientSocket, 403, "Client is not synced to an active board.");
+            return;
+        }
+
+        auto cardIt = board->cards.find(cardID);
+        if (cardIt == board->cards.end()) {
+            sendError(clientSocket, 404, "Card ID not found on this board.");
+            return;
+        }
+        Card& card = cardIt->second;
+
+        if (jsonParsed.contains("x")) {
+            card.x = jsonParsed["x"];
+        }
+        if (jsonParsed.contains("y")) {
+            card.y = jsonParsed["y"];
+        }
+        if (jsonParsed.contains("width")) {
+            float newWidth = jsonParsed["width"];
+            if (newWidth >= 10.0f) card.width = newWidth;
+        }
+        if (jsonParsed.contains("height")) {
+            float newHeight = jsonParsed["height"];
+            if (newHeight >= 10.0f) card.height = newHeight;
+        }
+        if (jsonParsed.contains("text")) {
+            std::string newText = jsonParsed["text"];
+            if (newText.length() <= 4096) card.text = newText;
+        }
+        if (jsonParsed.contains("zIndex")) {
+            card.zIndex = jsonParsed["zIndex"];
+        }
+        if (jsonParsed.contains("mediaURL")) {
+            card.mediaURL = jsonParsed["mediaURL"];
+        }
+
+        cout << "[SERVER] : Updated card " << cardID << "on Board" << board->boardID << "\n";
+    } catch (const nlohmann::json::parse_error& e) {
+        sendError(clientSocket, 400, "Malformed JSON in EDIT_CARD.");
+    }
+}
+
+// ADD: SQLITE FUNCTIONALITY FOR CHECKING & LOADING SAVED BOARDS
+void handleSyncBoard(int clientSocket, const std::string& payloadStr) {
+    try {
+        auto jsonParsed = json::parse(payloadStr);
+        uint32_t boardID = jsonParsed.value("boardID", 0);
+
+        if (boardID == 0) {
+            sendError(clientSocket, 400, "Invalid board IDI.");
+            return;
+        }
+
+        std::lock_guard<std::mutex> lockk(stateMutex);
+
+        clientBoardMap[clientSocket] = boardID;
+
+        // Creat/load board in memory if does not eist
+        if (activeBoards.find(boardID) == activeBoards.end()) {
+
+            BoardState newBoard;
+            newBoard.boardID = boardID;
+            activeBoards[boardID] = newBoard;
+
+            cout << "[SERVER] : Socket " << clientSocket << " successfully synced to Board ID " << boardID << "\n";
+        }
+    } catch (const std::exception& e) {
+        sendError(clientSocket, 400, "Malformed JSON in SYNC_BOARD.");
+    }
 }
