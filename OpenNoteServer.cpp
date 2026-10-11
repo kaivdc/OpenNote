@@ -28,9 +28,9 @@ int listener;  // listening socket descriptor
 int fdmax;
 mutex masterMutex; // guards master/fdmax across threads
 
-std::unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
-std::unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a active boardID
-std::mutex stateMutex;
+unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
+unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a active boardID
+mutex stateMutex;
 
 // the child thread
 void ChildThread(long childSocket)
@@ -62,7 +62,7 @@ void ChildThread(long childSocket)
             }
             else
             {
-                std::vector<char> payloadBuf(payloadLen);
+                vector<char> payloadBuf(payloadLen);
                 if(payloadLen > 0 && !read(childSocket, payloadBuf.data(), payloadLen)) {
                     cerr << "ERROR : Failed to read full payload stream. \n";
                     break;
@@ -73,48 +73,106 @@ void ChildThread(long childSocket)
 
                     switch (msgType) {
                         case 0x00: // HEARTBEAT (ping/pong)
-                            cout << "[SERVER] : Received HEARTBEAT\n";
+                        {
+                            std::cout << "[SERVER] : Received HEARTBEAT\n";
                             break;
+                        }
                         case 0x01: // AUTH_REQ
-                            cout << "[SERVER] : Received AUTH_REQ: " << payloadStr << "\n";
+                        {
+                            std::cout << "[SERVER] : Received AUTH_REQ: " << payloadStr << "\n";
                             break;
+                        }
                         case 0x02: // MOVE_CARD
-                            handleEditCard(childSocket, payloadStr);
+                        {
+                            BoardState* targetBoard = nullptr;
+                            if(handleEditCard(childSocket, payloadStr, targetBoard))
+                            {
+                                broadcastUpdate(targetBoard, childSocket, msgType, payloadStr);
+                            }
                             break;
+                        }
                         case 0x03: // EDIT_CONTENT
-                            handleEditCard(childSocket, payloadStr);
+                        {
+                            BoardState* targetBoard = nullptr;
+                            if(handleEditCard(childSocket, payloadStr, targetBoard))
+                            {
+                                broadcastUpdate(targetBoard, childSocket, msgType, payloadStr);
+                            }
                             break;
+                        }
                         case 0x04: // CREATE_CARD
-                            handleCreateCard(childSocket, payloadStr);
+                        {
+                            BoardState* targetBoard = nullptr;
+                            if(handleCreateCard(childSocket, payloadStr, targetBoard))
+                            {
+                                broadcastUpdate(targetBoard, childSocket, msgType, payloadStr);
+                            }
                             break;
+                        }
                         case 0x05: // DELETE_CARD
-                            handleDeleteCard(childSocket, payloadStr);
+                        {                            
+                            BoardState* targetBoard = nullptr;
+                            if(handleDeleteCard(childSocket, payloadStr, targetBoard))
+                            {
+                                broadcastUpdate(targetBoard, childSocket, msgType, payloadStr);
+                            }
                             break;
+                        }
                         case 0x06: // CREATE_CONNECTOR
-                            handleCreateConnector(childSocket, payloadStr);
+                        {
+                            BoardState* targetBoard = nullptr;
+                            if(handleCreateConnector(childSocket, payloadStr, targetBoard))
+                            {
+                                broadcastUpdate(targetBoard, childSocket, msgType, payloadStr);
+                            }
                             break;
+                        }
                         case 0x07: // EDIT_CONNECTOR
-                            handleEditConnector(childSocket, payloadStr);
+                        {
+                            BoardState* targetBoard = nullptr;
+                            if(handleEditConnector(childSocket, payloadStr, targetBoard))
+                            {
+                                broadcastUpdate(targetBoard, childSocket, msgType, payloadStr);
+                            }
                             break;
+                        }
                         case 0x08: // DELETE_CONNECTOR
-                            handleDeleteConnector(childSocket, payloadStr);
+                        {
+                            BoardState* targetBoard = nullptr;
+                            if(handleDeleteConnector(childSocket, payloadStr, targetBoard))
+                            {
+                                broadcastUpdate(targetBoard, childSocket, msgType, payloadStr);
+                            }
                             break;
+                        }
                         case 0x09: // SYNC_BOARD
-                            handleSyncBoard(childSocket, payloadStr);
+                        {
+                            BoardState* targetBoard = nullptr;
+                            if(handleSyncBoard(childSocket, payloadStr, targetBoard))
+                            {
+                                json joinPayload = {{"childSocket", childSocket},
+                                {"boardID", targetBoard->boardID}};
+                                broadcastUpdate(targetBoard, childSocket, 0x0A, joinPayload.dump());
+                            }
                             break;
+                        }
                         case 0x10: // DISCONNECT
-                            cout << "[SERVER] : Received DISCONNECT from: " << childSocket << "\n";
-                            close(childSocket);
+                        {
+                            std::cout << "[SERVER] : Received explicit DISCONNECT from: " << childSocket << "\n";
+                            cleanupClientSession(childSocket);
                             return;
+                        }
                         default:
-                            cout << "ERROR : Unknown Opcode: 0x" << std::hex << (int)msgType << "\n";
+                        {
+                            std::cout << "ERROR : Unknown Opcode: 0x" << hex << (int)msgType << "\n";
                             break;
+                        }
                     }
                 }
             }
         }
     }
-    close(childSocket);
+    cleanupClientSession(childSocket);
 }
 
 
@@ -218,7 +276,7 @@ int main(void)
                     fdmax = newfd;
                 }
             }
-            cout << "multiThreadServer: new connection from "
+            std::cout << "multiThreadServer: new connection from "
                  << inet_ntoa(remoteaddr.sin_addr)
                  << " socket " << newfd << endl;
 
@@ -237,6 +295,7 @@ int main(void)
     return 0;
 }
 
+// helper method for determining if and which board a socket is connected to
 BoardState* getBoardForSocketLocked(int clientSocket) {
     auto clientIt = clientBoardMap.find(clientSocket);
     if (clientIt == clientBoardMap.end()) {
@@ -251,8 +310,77 @@ BoardState* getBoardForSocketLocked(int clientSocket) {
     return &(boardIt->second);
 }
 
+// helper method for broadcasting updates to all clients connected to the same board
+void broadcastUpdate(BoardState* board, int senderSocket, uint8_t msgType, const string& payloadStr) {
+    if (!board)
+    {
+        return;
+    }
+
+    // Construct header
+    uint32_t payloadLen = static_cast<uint32_t>(payloadStr.size());
+    char header[5];
+    header[0] = static_cast<char>(msgType);
+    uint32_t networkLen = htonl(payloadLen);
+    memcpy(&header[1], &networkLen, 4);
+
+    // Send to all clients on board
+    for (int clientSocket : board->connectedClients) {
+        if (clientSocket == senderSocket) {
+            continue;
+        }
+
+        ssize_t headerSent = send(clientSocket, header, 5, 0);
+        if (headerSent <= 0) {
+            cerr << "[ERROR] : Failed to broadcast header to socket " << clientSocket << "\n";
+            continue;
+        }
+
+        if (payloadLen > 0) {
+            ssize_t payloadSent = send(clientSocket, payloadStr.data(), payloadLen, 0);
+            if (payloadSent <= 0) {
+                cerr << "[ERROR] : Failed to broadcast payload to socket " << clientSocket << "\n";
+            }
+        }
+    }
+
+}
+
+// helper method to gracefully remove all references to a childsocket on closure
+void cleanupClientSession(int clientSocket) {
+    lock_guard<mutex> lock(stateMutex);
+
+    auto boardIt = clientBoardMap.find(clientSocket);
+    if (boardIt != clientBoardMap.end()) {
+        uint32_t boardID = boardIt->second;
+
+        auto activeBoardIt = activeBoards.find(boardID);
+        if (activeBoardIt != activeBoards.end()) {
+            BoardState& board = activeBoardIt->second;
+
+            auto& clients = board.connectedClients;
+            clients.erase(remove(clients.begin(), clients.end(), clientSocket), clients.end());
+
+            // broadcast user left
+            nlohmann::json leavePayload = {
+                {"clientSocket", clientSocket},
+                {"boardID", boardID}
+            };
+
+            broadcastUpdate(&board, -1, 0x0B, leavePayload.dump());
+
+            std::cout << "[SERVER] : Client " << clientSocket << " removed from Board ID " << boardID << "\n";
+        }
+
+        clientBoardMap.erase(boardIt);
+    }
+
+    close(clientSocket);
+}
+
 // ADD: Save to SQL database & Broadcast to connected clients
-void handleCreateCard(int clientSocket, const string& payloadStr) {
+// ADD? zIndex autopopulates to top, with user changing in editCard?
+bool handleCreateCard(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
     try {
         auto jsonParsed = json::parse(payloadStr);
 
@@ -262,93 +390,112 @@ void handleCreateCard(int clientSocket, const string& payloadStr) {
         newCard.y = jsonParsed.value("y", 0.0f);
         newCard.width = jsonParsed.value("width", 100.0f);
         newCard.height = jsonParsed.value("height", 100.0f);
+        newCard.zIndex = jsonParsed.value("zIndex", 0);
         newCard.text = jsonParsed.value("text", "");
+        newCard.mediaURL = jsonParsed.value("mediaURL", "");
+        if (jsonParsed.contains("cardColor")) {
+            newCard.cardColor.r = jsonParsed["cardColor"].value("r", 255);
+            newCard.cardColor.g = jsonParsed["cardColor"].value("g", 255);
+            newCard.cardColor.b = jsonParsed["cardColor"].value("b", 255);
+            newCard.cardColor.a = jsonParsed["cardColor"].value("a", 255);
+        }
+        if (jsonParsed.contains("textColor")) {
+            newCard.textColor.r = jsonParsed["textColor"].value("r", 255);
+            newCard.textColor.g = jsonParsed["textColor"].value("g", 255);
+            newCard.textColor.b = jsonParsed["textColor"].value("b", 255);
+            newCard.textColor.a = jsonParsed["textColor"].value("a", 255);
+        }
+    
 
         if (!newCard.isValid()) {
             sendError(clientSocket, 400, "Invalid card structure or text length.");
-            return;
+            return false;
         }
 
-        std::lock_guard<std::mutex> lock(stateMutex);
+        lock_guard<mutex> lock(stateMutex);
 
         BoardState* board = getBoardForSocketLocked(clientSocket);
         if (!board) {
             sendError(clientSocket, 403, "Client is not synced to an active board.");
-            return;
+            return false;
         }
 
         board->cards[newCard.cardID] = newCard;
 
-        cout << "[SERVER] : Created card ID " << newCard.cardID << "in Board" << board->boardID << " by client " << clientSocket << "\n";
+        std::cout << "[SERVER] : Created card ID " << newCard.cardID << "in Board" << board->boardID << " by client " << clientSocket << "\n";
     } catch (const nlohmann::json::parse_error& e) {
         sendError(clientSocket, 400, "Malformed JSON in CREATE_CARD.");
+        return false;
     }
+    return true;
 }
 
 // ADD: Remove card from SQLite Database & Broadcast
-void handleDeleteCard(int clientSocket, const string& payloadStr) {
+bool handleDeleteCard(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
     try {
         auto jsonParsed = json::parse(payloadStr);
 
         uint32_t cardID = jsonParsed.value("cardID", 0);
         if (cardID == 0) {
             sendError(clientSocket, 400, "Missing or invalid cardID for edit.");
-            return;
+            return false;
         }
 
-        std::lock_guard<std::mutex> lock(stateMutex);
-        BoardState* board = getBoardForSocketLocked(clientSocket);
-        if (!board) {
+        lock_guard<mutex> lock(stateMutex);
+        outBoard = getBoardForSocketLocked(clientSocket);
+        if (!outBoard) {
             sendError(clientSocket, 403, "Client is not synced to an active board.");
-            return;
+            return false;
         }
 
-        auto cardIt = board->cards.find(cardID);
-        if (cardIt == board->cards.end()) {
+        auto cardIt = outBoard->cards.find(cardID);
+        if (cardIt == outBoard->cards.end()) {
             sendError(clientSocket, 404, "Card ID not found on this board.");
-            return;
+            return false;
         }
 
         // Erase connnectors that reference this cardID as a source or target (prevent null references)
-        for (auto it = board->connectors.begin(); it != board->connectors.end(); ) {
+        for (auto it = outBoard->connectors.begin(); it != outBoard->connectors.end(); ) {
             if(it->second.sourceCardID == cardID || it->second.targetCardID == cardID) {
-                it = board->connectors.erase(it);
+                it = outBoard->connectors.erase(it);
             } else {
                 it++;
             }
         }
 
-       board-> cards.erase(cardID);
+       outBoard-> cards.erase(cardID);
 
-       std::cout << "[SERVER] : Card " << cardID << " deleted from Board " << board->boardID << " by client " << clientSocket << "\n";
-    } catch (const std::exception& e) {
+       std::cout << "[SERVER] : Card " << cardID << " deleted from Board " << outBoard->boardID << " by client " << clientSocket << "\n";
+    } catch (const exception& e) {
         sendError(clientSocket, 400, "Malformed JSON payload in DELETE_CARD.");
+        return false;
     }
+    return true;
 }
 
 // ADD: EDIT SQLITE DATABASE & BROADCAST
-void handleEditCard(int clientSocket, const string& payloadStr) {
+bool handleEditCard(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
     try {
         auto jsonParsed = json::parse(payloadStr);
 
         uint32_t cardID = jsonParsed.value("cardID", 0);
         if (cardID == 0) {
             sendError(clientSocket, 400, "Missing or invalid cardID for edit.");
-            return;
+            return false;
         }
 
-        std::lock_guard<std::mutex> lock(stateMutex);
+        lock_guard<mutex> lock(stateMutex);
 
-        BoardState* board = getBoardForSocketLocked(clientSocket);
-        if (!board) {
+        outBoard = getBoardForSocketLocked(clientSocket);
+        if (!outBoard) {
             sendError(clientSocket, 403, "Client is not synced to an active board.");
-            return;
+            return false;
         }
 
-        auto cardIt = board->cards.find(cardID);
-        if (cardIt == board->cards.end()) {
+        auto cardIt = outBoard->cards.find(cardID);
+        if (cardIt == outBoard->cards.end()) {
             sendError(clientSocket, 404, "Card ID not found on this board.");
-            return;
+            return false;
         }
         Card& card = cardIt->second;
 
@@ -367,7 +514,7 @@ void handleEditCard(int clientSocket, const string& payloadStr) {
             if (newHeight >= 10.0f) card.height = newHeight;
         }
         if (jsonParsed.contains("text")) {
-            std::string newText = jsonParsed["text"];
+            string newText = jsonParsed["text"];
             if (newText.length() <= 4096) card.text = newText;
         }
         if (jsonParsed.contains("zIndex")) {
@@ -377,24 +524,26 @@ void handleEditCard(int clientSocket, const string& payloadStr) {
             card.mediaURL = jsonParsed["mediaURL"];
         }
 
-        cout << "[SERVER] : Updated card " << cardID << "on Board" << board->boardID << " by client " << clientSocket << "\n";
+        std::cout << "[SERVER] : Updated card " << cardID << "on Board" << outBoard->boardID << " by client " << clientSocket << "\n";
     } catch (const nlohmann::json::parse_error& e) {
         sendError(clientSocket, 400, "Malformed JSON in EDIT_CARD.");
+        return false;
     }
+    return true;
 }
 
 // ADD: SQLITE FUNCTIONALITY FOR CHECKING & LOADING SAVED BOARDS
-void handleSyncBoard(int clientSocket, const std::string& payloadStr) {
+bool handleSyncBoard(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
     try {
         auto jsonParsed = json::parse(payloadStr);
         uint32_t boardID = jsonParsed.value("boardID", 0);
 
         if (boardID == 0) {
             sendError(clientSocket, 400, "Invalid board IDI.");
-            return;
+            return false;
         }
 
-        std::lock_guard<std::mutex> lockk(stateMutex);
+        lock_guard<mutex> lockk(stateMutex);
 
         clientBoardMap[clientSocket] = boardID;
 
@@ -404,16 +553,26 @@ void handleSyncBoard(int clientSocket, const std::string& payloadStr) {
             BoardState newBoard;
             newBoard.boardID = boardID;
             activeBoards[boardID] = newBoard;
-
-            cout << "[SERVER] : Socket " << clientSocket << " successfully synced to Board ID " << boardID << "\n";
         }
-    } catch (const std::exception& e) {
+
+        outBoard = &activeBoards[boardID];
+
+        auto& clients = outBoard->connectedClients;
+        if (std::find(clients.begin(), clients.end(), clientSocket) == clients.end()) {
+            clients.push_back(clientSocket);
+        }
+
+        std::cout << "[SERVER] : Socket " << clientSocket << " successfully synced to Board ID " << boardID << "\n";
+
+    } catch (const exception& e) {
         sendError(clientSocket, 400, "Malformed JSON in SYNC_BOARD.");
+        return false;
     }
+    return true;
 }
 
 // ADD: Save to SQL database & Broadcast to connected clients
-void handleCreateConnector(int clientSocket, const string& payloadStr) {
+bool handleCreateConnector(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
     try {
         auto jsonParsed = json::parse(payloadStr);
 
@@ -431,90 +590,95 @@ void handleCreateConnector(int clientSocket, const string& payloadStr) {
 
         if (!newConnector.isValid()) {
             sendError(clientSocket, 400, "Invalid connector structure.");
-            return;
+            return false;
         }
 
-        std::lock_guard<std::mutex> lock(stateMutex);
+        lock_guard<mutex> lock(stateMutex);
 
-        BoardState* board = getBoardForSocketLocked(clientSocket);
-        if (!board) {
+        outBoard = getBoardForSocketLocked(clientSocket);
+        if (!outBoard) {
             sendError(clientSocket, 403, "Client is not synced to an active board.");
-            return;
+            return false;
         }
 
-        if (!board->isConnectorValid(newConnector)) {
+        if (!outBoard->isConnectorValid(newConnector)) {
             sendError(clientSocket, 400, "Invalid connector, source or target does not exist.");
+            return false;
         }
 
-        if (board->connectors.find(newConnector.connectorID) != board->connectors.end()) {
+        if (outBoard->connectors.find(newConnector.connectorID) != outBoard->connectors.end()) {
             sendError(clientSocket, 400, "Invalid connector, connector ID already exists.");
-            return;
+            return false;
         }
 
-        board->connectors[newConnector.connectorID] = newConnector;
+        outBoard->connectors[newConnector.connectorID] = newConnector;
 
-        cout << "[SERVER] : Created connnector ID " << newConnector.connectorID << "in Board" << board->boardID << " by client " << clientSocket << "\n";
+        std::cout << "[SERVER] : Created connnector ID " << newConnector.connectorID << "in Board" << outBoard->boardID << " by client " << clientSocket << "\n";
     } catch (const nlohmann::json::parse_error& e) {
         sendError(clientSocket, 400, "Malformed JSON in CREATE_CONNECTOR.");
+        return false;
     }
+    return true;
 }
 
 // ADD: Remove connector from SQLite Database & Broadcast
-void handleDeleteConnector(int clientSocket, const string& payloadStr) {
+bool handleDeleteConnector(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
     try {
         auto jsonParsed = json::parse(payloadStr);
 
         uint32_t connectorID = jsonParsed.value("connectorID", 0);
         if (connectorID == 0) {
             sendError(clientSocket, 400, "Missing or invalid connectorID for edit.");
-            return;
+            return false;
         }
 
-        std::lock_guard<std::mutex> lock(stateMutex);
-        BoardState* board = getBoardForSocketLocked(clientSocket);
-        if (!board) {
+        lock_guard<mutex> lock(stateMutex);
+        outBoard = getBoardForSocketLocked(clientSocket);
+        if (!outBoard) {
             sendError(clientSocket, 403, "Client is not synced to an active board.");
-            return;
+            return false;
         }
 
-        auto connectorIt = board->connectors.find(connectorID);
-        if (connectorIt == board->connectors.end()) {
+        auto connectorIt = outBoard->connectors.find(connectorID);
+        if (connectorIt == outBoard->connectors.end()) {
             sendError(clientSocket, 404, "Connector ID not found on this board.");
-            return;
+            return false;
         }
 
-       board-> cards.erase(connectorID);
+       outBoard-> connectors.erase(connectorID);
 
-       std::cout << "[SERVER] : Connector " << connectorID << " deleted from Board " << board->boardID << " by client " << clientSocket << "\n";
-    } catch (const std::exception& e) {
+       std::cout << "[SERVER] : Connector " << connectorID << " deleted from Board " << outBoard->boardID << " by client " << clientSocket << "\n";
+    } catch (const exception& e) {
         sendError(clientSocket, 400, "Malformed JSON payload in DELETE_CONNECTOR.");
+        return false;
     }
+    return true;
 }
 
 // ADD: EDIT SQLITE DATABASE & BROADCAST
 // ADD? Edit source/target cardIDs (Drag connector to different card instead of making new one?)
-void handleEditConnector(int clientSocket, const string& payloadStr) {
+bool handleEditConnector(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
     try {
         auto jsonParsed = json::parse(payloadStr);
 
         uint32_t connectorID = jsonParsed.value("connectorID", 0);
         if (connectorID == 0) {
             sendError(clientSocket, 400, "Missing or invalid connectorID for edit.");
-            return;
+            return false;
         }
 
-        std::lock_guard<std::mutex> lock(stateMutex);
+        lock_guard<mutex> lock(stateMutex);
 
-        BoardState* board = getBoardForSocketLocked(clientSocket);
-        if (!board) {
+        outBoard = getBoardForSocketLocked(clientSocket);
+        if (!outBoard) {
             sendError(clientSocket, 403, "Client is not synced to an active board.");
-            return;
+            return false;
         }
 
-        auto connectorIt = board->connectors.find(connectorID);
-        if (connectorIt == board->connectors.end()) {
+        auto connectorIt = outBoard->connectors.find(connectorID);
+        if (connectorIt == outBoard->connectors.end()) {
             sendError(clientSocket, 404, "Connector ID not found on this board.");
-            return;
+            return false;
         }
         Connector& connector = connectorIt->second;
 
@@ -529,8 +693,10 @@ void handleEditConnector(int clientSocket, const string& payloadStr) {
             connector.color.a = jsonParsed["color"].value("a", connector.color.a);
         }
 
-        cout << "[SERVER] : Updated connector " << connectorID << "on Board" << board->boardID << " by client " << clientSocket << "\n";
+        std::cout << "[SERVER] : Updated connector " << connectorID << "on Board" << outBoard->boardID << " by client " << clientSocket << "\n";
     } catch (const nlohmann::json::parse_error& e) {
         sendError(clientSocket, 400, "Malformed JSON in EDIT_CONNECTOR.");
+        return false;
     }
+    return true;
 }

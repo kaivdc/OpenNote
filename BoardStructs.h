@@ -17,11 +17,11 @@ struct Card {
     uint32_t cardID;
     float x;
     float y;
-    float width;
-    float height;
+    float width; // > 0 but <= 10
+    float height; // > 0 but <= 10
     uint32_t zIndex;
-    std::string text;
-    std::string mediaURL;
+    string text; // < 4096
+    string mediaURL;
     Color cardColor;
     Color textColor;
 
@@ -34,7 +34,7 @@ struct Connector {
     uint32_t connectorID;
     uint32_t sourceCardID;
     uint32_t targetCardID;
-    float thickness;
+    float thickness; // > 0
     Color color;
 
     bool isValid() const {
@@ -44,9 +44,9 @@ struct Connector {
 
 struct BoardState {
     uint32_t boardID;
-    std::unordered_map<uint32_t, Card> cards;
-    std::unordered_map<uint32_t, Connector> connectors;
-    std::vector<int> connectedClients;
+    unordered_map<uint32_t, Card> cards;
+    unordered_map<uint32_t, Connector> connectors;
+    vector<int> connectedClients;
 
     bool isValid() const {
         return (boardID > 0);
