@@ -79,16 +79,16 @@ void ChildThread(long childSocket)
                             cout << "[SERVER] : Received AUTH_REQ: " << payloadStr << "\n";
                             break;
                         case 0x02: // MOVE_CARD
-                            cout << "[SERVER] : Received MOVE_CARD:" << payloadStr << "\n";
+                            handleEditCard(childSocket, payloadStr);
                             break;
                         case 0x03: // EDIT_CONTENT
-                            cout << "[SERVER] : Received EDIT_CONTENT:" << payloadStr << "\n";
+                            handleEditCard(childSocket, payloadStr);
                             break;
                         case 0x04: // CREATE_CARD
                             handleCreateCard(childSocket, payloadStr);
                             break;
                         case 0x05: // DELETE_CARD
-                            cout << "[SERVER] : Received DELETE_CARD:" << payloadStr << "\n";
+                            handleDeleteCard(childSocket, payloadStr);
                             break;
                         case 0x06: // CREATE_CONNECTOR
                             cout << "[SERVER] : Received CREATE_CONNECTOR:" << payloadStr << "\n";
@@ -100,7 +100,7 @@ void ChildThread(long childSocket)
                             cout << "[SERVER] : Received DELETE_CONNECTOR:" << payloadStr << "\n";
                             break;
                         case 0x09: // SYNC_BOARD
-                            cout << "[SERVER] : Received SYNC_BOARD:" << payloadStr << "\n";
+                            handleSyncBoard(childSocket, payloadStr);
                             break;
                         case 0x10: // DISCONNECT
                             cout << "[SERVER] : Received DISCONNECT from: " << childSocket << "\n";
@@ -279,21 +279,57 @@ void handleCreateCard(int clientSocket, const string& payloadStr) {
 
         board->cards[newCard.cardID] = newCard;
 
-        cout << "[SERVER] : Created card ID " << newCard.cardID << "in Board" << board->boardID << "\n";
+        cout << "[SERVER] : Created card ID " << newCard.cardID << "in Board" << board->boardID << " by client " << clientSocket << "\n";
     } catch (const nlohmann::json::parse_error& e) {
         sendError(clientSocket, 400, "Malformed JSON in CREATE_CARD.");
     }
 }
 
+// ADD: Remove card from SQLite Database & Broadcast
 void handleDeleteCard(int clientSocket, const string& payloadStr) {
-    
-}
-
-void handleEditCard(int clientSocket, const string& payloadStr) {
     try {
         auto jsonParsed = json::parse(payloadStr);
 
-        Card updatedCard;
+        uint32_t cardID = jsonParsed.value("cardID", 0);
+        if (cardID == 0) {
+            sendError(clientSocket, 400, "Missing or invalid cardID for edit.");
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(stateMutex);
+        BoardState* board = getBoardForSocketLocked(clientSocket);
+        if (!board) {
+            sendError(clientSocket, 403, "Client is not synced to an active board.");
+            return;
+        }
+
+        auto cardIt = board->cards.find(cardID);
+        if (cardIt == board->cards.end()) {
+            sendError(clientSocket, 404, "Card ID not found on this board.");
+            return;
+        }
+
+        // Erase connnectors that reference this cardID as a source or target (prevent null references)
+        for (auto it = board->connectors.begin(); it != board->connectors.end(); ) {
+            if(it->second.sourceCardID == cardID || it->second.targetCardID == cardID) {
+                it = board->connectors.erase(it);
+            } else {
+                it++;
+            }
+        }
+
+       board-> cards.erase(cardID);
+
+       std::cout << "[SERVER] : Card " << cardID << " deleted from Board " << board->boardID << " by client " << clientSocket << "\n";
+    } catch (const std::exception& e) {
+        sendError(clientSocket, 400, "Malformed JSON payload in DELETE_CARD.");
+    }
+}
+
+// ADD: EDIT SQLITE DATABASE & BROADCAST
+void handleEditCard(int clientSocket, const string& payloadStr) {
+    try {
+        auto jsonParsed = json::parse(payloadStr);
 
         uint32_t cardID = jsonParsed.value("cardID", 0);
         if (cardID == 0) {
@@ -341,7 +377,7 @@ void handleEditCard(int clientSocket, const string& payloadStr) {
             card.mediaURL = jsonParsed["mediaURL"];
         }
 
-        cout << "[SERVER] : Updated card " << cardID << "on Board" << board->boardID << "\n";
+        cout << "[SERVER] : Updated card " << cardID << "on Board" << board->boardID << " by client " << clientSocket << "\n";
     } catch (const nlohmann::json::parse_error& e) {
         sendError(clientSocket, 400, "Malformed JSON in EDIT_CARD.");
     }
@@ -362,7 +398,7 @@ void handleSyncBoard(int clientSocket, const std::string& payloadStr) {
 
         clientBoardMap[clientSocket] = boardID;
 
-        // Creat/load board in memory if does not eist
+        // Creat/load board in memory if does not exist
         if (activeBoards.find(boardID) == activeBoards.end()) {
 
             BoardState newBoard;
@@ -373,5 +409,127 @@ void handleSyncBoard(int clientSocket, const std::string& payloadStr) {
         }
     } catch (const std::exception& e) {
         sendError(clientSocket, 400, "Malformed JSON in SYNC_BOARD.");
+    }
+}
+
+// ADD: Save to SQL database & Broadcast to connected clients
+void handleCreateConnector(int clientSocket, const string& payloadStr) {
+    try {
+        auto jsonParsed = json::parse(payloadStr);
+
+        Connector newConnector;
+        newConnector.connectorID = jsonParsed.value("connectorID", 0);
+        newConnector.sourceCardID = jsonParsed.value("sourceCardID", 0);
+        newConnector.targetCardID = jsonParsed.value("targetCardID", 0);
+        newConnector.thickness = jsonParsed.value("thickness", 2.0f);
+        if (jsonParsed.contains("color")) {
+            newConnector.color.r = jsonParsed["color"].value("r", 255);
+            newConnector.color.g = jsonParsed["color"].value("g", 255);
+            newConnector.color.b = jsonParsed["color"].value("b", 255);
+            newConnector.color.a = jsonParsed["color"].value("a", 255);
+        }
+
+        if (!newConnector.isValid()) {
+            sendError(clientSocket, 400, "Invalid connector structure.");
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(stateMutex);
+
+        BoardState* board = getBoardForSocketLocked(clientSocket);
+        if (!board) {
+            sendError(clientSocket, 403, "Client is not synced to an active board.");
+            return;
+        }
+
+        if (!board->isConnectorValid(newConnector)) {
+            sendError(clientSocket, 400, "Invalid connector, source or target does not exist.");
+        }
+
+        if (board->connectors.find(newConnector.connectorID) != board->connectors.end()) {
+            sendError(clientSocket, 400, "Invalid connector, connector ID already exists.");
+            return;
+        }
+
+        board->connectors[newConnector.connectorID] = newConnector;
+
+        cout << "[SERVER] : Created connnector ID " << newConnector.connectorID << "in Board" << board->boardID << " by client " << clientSocket << "\n";
+    } catch (const nlohmann::json::parse_error& e) {
+        sendError(clientSocket, 400, "Malformed JSON in CREATE_CONNECTOR.");
+    }
+}
+
+// ADD: Remove connector from SQLite Database & Broadcast
+void handleDeleteConnector(int clientSocket, const string& payloadStr) {
+    try {
+        auto jsonParsed = json::parse(payloadStr);
+
+        uint32_t connectorID = jsonParsed.value("connectorID", 0);
+        if (connectorID == 0) {
+            sendError(clientSocket, 400, "Missing or invalid connectorID for edit.");
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(stateMutex);
+        BoardState* board = getBoardForSocketLocked(clientSocket);
+        if (!board) {
+            sendError(clientSocket, 403, "Client is not synced to an active board.");
+            return;
+        }
+
+        auto connectorIt = board->connectors.find(connectorID);
+        if (connectorIt == board->connectors.end()) {
+            sendError(clientSocket, 404, "Connector ID not found on this board.");
+            return;
+        }
+
+       board-> cards.erase(connectorID);
+
+       std::cout << "[SERVER] : Connector " << connectorID << " deleted from Board " << board->boardID << " by client " << clientSocket << "\n";
+    } catch (const std::exception& e) {
+        sendError(clientSocket, 400, "Malformed JSON payload in DELETE_CONNECTOR.");
+    }
+}
+
+// ADD: EDIT SQLITE DATABASE & BROADCAST
+void handleEditConnector(int clientSocket, const string& payloadStr) {
+    try {
+        auto jsonParsed = json::parse(payloadStr);
+
+        uint32_t connectorID = jsonParsed.value("connectorID", 0);
+        if (connectorID == 0) {
+            sendError(clientSocket, 400, "Missing or invalid connectorID for edit.");
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(stateMutex);
+
+        BoardState* board = getBoardForSocketLocked(clientSocket);
+        if (!board) {
+            sendError(clientSocket, 403, "Client is not synced to an active board.");
+            return;
+        }
+
+        auto connectorIt = board->connectors.find(connectorID);
+        if (connectorIt == board->connectors.end()) {
+            sendError(clientSocket, 404, "Connector ID not found on this board.");
+            return;
+        }
+        Connector& connector = connectorIt->second;
+
+        if (jsonParsed.contains("thickness")) {
+            float t = jsonParsed["thickness"];
+            if (t > 0.0f) connector.thickness = t;
+        }
+        if (jsonParsed.contains("color")) {
+            connector.color.r = jsonParsed["color"].value("r", connector.color.r);
+            connector.color.g = jsonParsed["color"].value("g", connector.color.g);
+            connector.color.b = jsonParsed["color"].value("b", connector.color.b);
+            connector.color.a = jsonParsed["color"].value("a", connector.color.a);
+        }
+
+        cout << "[SERVER] : Updated connector " << connectorID << "on Board" << board->boardID << " by client " << clientSocket << "\n";
+    } catch (const nlohmann::json::parse_error& e) {
+        sendError(clientSocket, 400, "Malformed JSON in EDIT_CONNECTOR.");
     }
 }

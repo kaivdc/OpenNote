@@ -51,6 +51,18 @@ struct BoardState {
     bool isValid() const {
         return (boardID > 0);
     }
+
+    bool isConnectorValid(const Connector& connector) const {
+        if(!connector.isValid()) 
+        {
+            return false;
+        }
+
+        bool sourceExists = cards.find(connector.sourceCardID) != cards.end();
+        bool targetExists = cards.find(connector.targetCardID) != cards.end();
+
+        return sourceExists && targetExists;
+    }
 };
 
 #endif
