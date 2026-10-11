@@ -12,6 +12,7 @@
 #include <system_error>
 #include <cstring>
 #include <cstdlib>
+#include <vector>
 
 using namespace std;
 
@@ -53,7 +54,7 @@ void ChildThread(long childSocket)
             }
             else
             {
-                vector<char> payloadBuf(payloadLen);
+                std::vector<char> payloadBuf(payloadLen);
                 if(payloadLen > 0 && !read(childSocket, payloadBuf.data(), payloadLen)) {
                     cerr << "ERROR : Failed to read full payload stream. \n";
                     break;
