@@ -84,13 +84,16 @@ void ChildThread(long childSocket)
                         case 0x06: // CREATE_CONNECTOR
                             cout << "[SERVER] : Received CREATE_CONNECTOR:" << payloadStr << "\n";
                             break;
-                        case 0x07: // DELETE_CONNECTOR
+                        case 0x07: // EDIT_CONNECTOR
+                            cout << "[SERVER] : Received EDIT_CONNECTOR:" << payloadStr << "\n";
+                            break;
+                        case 0x08: // DELETE_CONNECTOR
                             cout << "[SERVER] : Received DELETE_CONNECTOR:" << payloadStr << "\n";
                             break;
-                        case 0x08: // SYNC_BOARD
+                        case 0x09: // SYNC_BOARD
                             cout << "[SERVER] : Received SYNC_BOARD:" << payloadStr << "\n";
                             break;
-                        case 0x09: // DISCONNECT
+                        case 0x10: // DISCONNECT
                             cout << "[SERVER] : Received DISCONNECT from: " << childSocket << "\n";
                             close(childSocket);
                             return;
