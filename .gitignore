@@ -1,0 +1,8 @@
+ClientRenderer.o
+OpenNoteClient
+OpenNoteClient.o
+OpenNoteServer
+OpenNoteServer.o
+
+*.exe
+*.o

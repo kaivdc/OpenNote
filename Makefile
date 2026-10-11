@@ -1,21 +1,21 @@
-CFLAGS= -g -std=c++11 -pthread
-LDFLAGS= #-lsocket -lnsl
-LDFLAGS1= -pthread #-lsocket -lnsl
-CC=g++
+CXX = g++
+CXXFLAGS = -g -std=c++11 -pthread -Wall -Wextra
+LDFLAGS = -pthread
 
-all: sclient multiThreadServer
+# Targets
+all: OpenNoteServer OpenNoteClient
 
-# To make an executable
-sclient: sclient.o 
-	$(CC) $(LDFLAGS) -o sclient sclient.o
- 
-multiThreadServer: multiThreadServer.o
-	$(CC) $(LDFLAGS1) -o multiThreadServer multiThreadServer.o
+# Build the Server exe
+OpenNoteServer: OpenNoteServer.o
+	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o $(LDFLAGS)
 
-# To make an object from source
-.c.o:
-	$(CC) $(CFLAGS) -c $*.c
+# Build the client exe (with renderer and client)
+OpenNoteClient: OpenNoteClient.o ClientRenderer.o
+	$(CXX) $(CXXFLAGS) -o OpenNoteClient OpenNoteClient.o ClientRenderer.o $(LDFLAGS)
 
-# clean out the dross
+%.o: %.cpp BoardStructs.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Clean
 clean:
-	-rm sclient multiThreadServer *.o core 
+	rm -f OpenNoteServer OpenNoteClient *.o core

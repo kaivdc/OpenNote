@@ -6,6 +6,8 @@
 #include <vector>
 #include <cstdint>
 
+using namespace std;
+
 struct Color {
     uint8_t r;
     uint8_t g;

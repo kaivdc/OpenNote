@@ -13,6 +13,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <vector>
+#include <string>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 
 #include "BoardStructs.h"
@@ -31,6 +33,17 @@ mutex masterMutex; // guards master/fdmax across threads
 unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
 unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a active boardID
 mutex stateMutex;
+
+bool handleEditCard(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+bool handleCreateCard(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+bool handleDeleteCard(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+bool handleCreateConnector(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+bool handleEditConnector(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+bool handleDeleteConnector(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+bool handleSyncBoard(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+
+void broadcastUpdate(BoardState* board, int senderSocket, uint8_t msgType, const std::string& payloadStr);
+void cleanupClientSession(int clientSocket);
 
 // the child thread
 void ChildThread(long childSocket)
