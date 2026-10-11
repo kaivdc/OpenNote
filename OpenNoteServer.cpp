@@ -91,13 +91,13 @@ void ChildThread(long childSocket)
                             handleDeleteCard(childSocket, payloadStr);
                             break;
                         case 0x06: // CREATE_CONNECTOR
-                            cout << "[SERVER] : Received CREATE_CONNECTOR:" << payloadStr << "\n";
+                            handleCreateConnector(childSocket, payloadStr);
                             break;
                         case 0x07: // EDIT_CONNECTOR
-                            cout << "[SERVER] : Received EDIT_CONNECTOR:" << payloadStr << "\n";
+                            handleEditConnector(childSocket, payloadStr);
                             break;
                         case 0x08: // DELETE_CONNECTOR
-                            cout << "[SERVER] : Received DELETE_CONNECTOR:" << payloadStr << "\n";
+                            handleDeleteConnector(childSocket, payloadStr);
                             break;
                         case 0x09: // SYNC_BOARD
                             handleSyncBoard(childSocket, payloadStr);
@@ -492,6 +492,7 @@ void handleDeleteConnector(int clientSocket, const string& payloadStr) {
 }
 
 // ADD: EDIT SQLITE DATABASE & BROADCAST
+// ADD? Edit source/target cardIDs (Drag connector to different card instead of making new one?)
 void handleEditConnector(int clientSocket, const string& payloadStr) {
     try {
         auto jsonParsed = json::parse(payloadStr);
