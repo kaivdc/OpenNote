@@ -26,6 +26,7 @@ mutex masterMutex; // guards master/fdmax across threads
 // the child thread
 void ChildThread(long childSocket)
 {
+    char headerBuf[5];
     char buf[MAX_LINE];
     int nbytes;
     int j;
@@ -33,55 +34,107 @@ void ChildThread(long childSocket)
     while (1)
     {
         // handle data from a client
-        if ((nbytes = recv(childSocket, buf, sizeof(buf), 0)) <= 0)
-        {
-            // got error or connection closed by client
-            if (nbytes == 0)
-            {
-                // connection closed
-                cout << "multiThreadServer: socket " << childSocket << " hung up" << endl;
-            }
-            else
-            {
-                perror("recv");
-            }
-            close(childSocket); // bye!
-            {
-                lock_guard<mutex> lock(masterMutex);
-                FD_CLR(childSocket, &master); // remove from master set
-            }
-            return;
+        if (!read(childSocket, headerBuf, 5)) {
+            cerr << "Client disconnected or header read failed. \n";
+            break;
         }
         else
         {
-            // we got some data from a client
-            cout << buf;
+            uint8_t msgType = static_cast<uint8_t>(headerBuf[0]);
 
-            // snapshot the shared state, then broadcast without holding the lock
-            fd_set masterCopy;
-            int fdmaxCopy;
+            uint32_t networkLen;
+            memcpy(&networkLen, &headerBuf[1], 4);
+            // network to host
+            uint32_t payloadLen = ntohl(networkLen);
+
+            if(payloadLen > 10 * 1024 * 1024) // if > 10 MB
             {
-                lock_guard<mutex> lock(masterMutex);
-                masterCopy = master;
-                fdmaxCopy = fdmax;
+                cerr << "ERROR : Payload length exceeds 10MB. \n";
             }
-            for (j = 0; j <= fdmaxCopy; j++)
+            else
             {
-                // send to everyone!
-                if (FD_ISSET(j, &masterCopy))
+                vector<char> payloadBuf(payloadLen);
+                if(payloadLen > 0 && !read(childSocket, payloadBuf.data(), payloadLen)) {
+                    cerr << "ERROR : Failed to read full payload stream. \n";
+                    break;
+                }
+                else
                 {
-                    // except the listener and ourselves
-                    if (j != listener && j != childSocket)
-                    {
-                        if (send(j, buf, nbytes, 0) == -1)
-                        {
-                            perror("send");
-                        }
+                    string payloadStr(payloadBuf.begin(), payloadBuf.end());
+
+                    switch (msgType) {
+                        case 0x00: // HEARTBEAT (ping/pong)
+                            cout << "[SERVER] : Received HEARTBEAT\n";
+                            break;
+                        case 0x01: // AUTH_REQ
+                            cout << "[SERVER] : Received AUTH_REQ: " << payloadStr << "\n";
+                            break;
+                        case 0x02: // MOVE_CARD
+                            cout << "[SERVER] : Received MOVE_CARD:" << payloadStr << "\n";
+                            break;
+                        case 0x03: // EDIT_CONTENT
+                            cout << "[SERVER] : Received EDIT_CONTENT:" << payloadStr << "\n";
+                            break;
+                        case 0x04: // CREATE_CARD
+                            cout << "[SERVER] : Received CREATE_CARD:" << payloadStr << "\n";
+                            break;
+                        case 0x05: // DELETE_CARD
+                            cout << "[SERVER] : Received DELETE_CARD:" << payloadStr << "\n";
+                            break;
+                        case 0x06: // CREATE_CONNECTOR
+                            cout << "[SERVER] : Received CREATE_CONNECTOR:" << payloadStr << "\n";
+                            break;
+                        case 0x07: // DELETE_CONNECTOR
+                            cout << "[SERVER] : Received DELETE_CONNECTOR:" << payloadStr << "\n";
+                            break;
+                        case 0x08: // SYNC_BOARD
+                            cout << "[SERVER] : Received SYNC_BOARD:" << payloadStr << "\n";
+                            break;
+                        case 0x09: // DISCONNECT
+                            cout << "[SERVER] : Received DISCONNECT from: " << childSocket << "\n";
+                            close(childSocket);
+                            return;
+                        default:
+                            cout << "ERROR : Unknown Opcode: 0x" << std::hex << (int)msgType << "\n";
+                            break;
                     }
                 }
             }
         }
     }
+    close(childSocket);
+}
+
+
+// helper method to read exactly bytesToRead number of bytes from the socket
+bool read(int sock, char* buffer, size_t bytesToRead) {
+    size_t bytesRead = 0;
+    while (bytesRead < bytesToRead) {
+        ssize_t result = recv(sock, buffer + bytesRead, bytesToRead - bytesRead, 0);
+        if(result <= 0) {
+            // socket connection closed or erroring
+            return false;
+        }
+        bytesRead += result;
+    }
+    return true;
+}
+
+// helper method to send error to client
+void sendError(int sock, int errCode, const string& errorMsg) {
+    string jsonPayload = "{\"errCode\":" + to_string(errCode) + 
+                              ",\"errorMsg\":\"" + errorMsg + "\"}";
+    
+    uint32_t payloadLen = static_cast<uint32_t>(jsonPayload.size());
+    
+    char header[5];
+    header[0] = static_cast<char>(0xFF);
+    
+    uint32_t networkLen = htonl(payloadLen);
+    memcpy(&header[1], &networkLen, 4);
+    
+    send(sock, header, 5, 0);
+    send(sock, jsonPayload.data(), payloadLen, 0);
 }
 
 int main(void)
