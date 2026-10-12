@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -g -std=c++11 -pthread -Wall -Wextra
+CXXFLAGS = -g -std=c++20 -pthread -Wall -Wextra
 LDFLAGS = -pthread
 
 # Targets

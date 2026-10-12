@@ -7,7 +7,7 @@
             ],
             "defines": [],
             "cStandard": "gnu23",
-            "cppStandard": "gnu++17",
+            "cppStandard": "gnu++20",
             "intelliSenseMode": "linux-gcc-x64",
             "compilerPath": "/usr/bin/g++"
         },
@@ -18,7 +18,7 @@
             ],
             "defines": [],
             "cStandard": "gnu23",
-            "cppStandard": "gnu++17",
+            "cppStandard": "gnu++20",
             "intelliSenseMode": "linux-gcc-x64"
         }
     ],
