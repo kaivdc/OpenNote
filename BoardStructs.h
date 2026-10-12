@@ -8,6 +8,23 @@
 
 using namespace std;
 
+enum class OpCode : uint8_t 
+{
+HEARTBEAT = 0x00,
+AUTH_REQ = 0x01,
+MOVE_CARD = 0x02,
+EDIT_CARD_CONTENT = 0x03,
+CREATE_CARD = 0x04,
+DELETE_CARD = 0x05,
+CREATE_CONNECTOR = 0x06,
+EDIT_CONNECTOR = 0x07,
+DELETE_CONNECTOR =  0x08,
+SYNC_BOARD =  0x09,
+DISCONNECT =  0x10,
+CLIENT_DISCONNECTED = 0x0B,
+CLIENT_CONNECTED = 0x0A
+};
+
 struct Color {
     uint8_t r;
     uint8_t g;

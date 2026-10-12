@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <vector>
 #include <bit>
+#include "BoardStructs.h"
 
 using namespace std;
 using buffer = vector<uint8_t>;
@@ -22,16 +23,7 @@ using buffer = vector<uint8_t>;
 constexpr size_t HEADER_SIZE = 5; // 5 byte header: 1-byte msgType, 4-byte payloadLength
 constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB max payload
 
-enum class OpCode : uint8_t 
-{
-  HEARTBEAT = 0x00,
-  AUTH_REQ = 0x01,
-  MOVE_CARD = 0x02,
-  EDIT_TEXT = 0x03,
-  CREATE_CARD = 0x04,
-  DISCONNECT = 0x05,
-  DELETE_CARD = 0x06
-};
+
 
 /*
       TEMPORARY PLACEMENT OF APPEND FUNCTIONS
@@ -87,7 +79,6 @@ buffer moveCardPacket(uint32_t cardID, float x, float y, float width, float heig
 {
   buffer payload;
   appendUint32(payload, cardID);
-  append
 }
 
 int main(int argc, char *argv[])

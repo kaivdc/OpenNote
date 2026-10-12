@@ -85,17 +85,17 @@ void ChildThread(long childSocket)
                     string payloadStr(payloadBuf.begin(), payloadBuf.end());
 
                     switch (msgType) {
-                        case 0x00: // HEARTBEAT (ping/pong)
+                        case static_cast<uint8_t>(OpCode::HEARTBEAT): // HEARTBEAT (ping/pong)
                         {
                             std::cout << "[SERVER] : Received HEARTBEAT\n";
                             break;
                         }
-                        case 0x01: // AUTH_REQ
+                        case static_cast<uint8_t>(OpCode::AUTH_REQ): // AUTH_REQ
                         {
                             std::cout << "[SERVER] : Received AUTH_REQ: " << payloadStr << "\n";
                             break;
                         }
-                        case 0x02: // MOVE_CARD
+                        case static_cast<uint8_t>(OpCode::MOVE_CARD): // MOVE_CARD
                         {
                             BoardState* targetBoard = nullptr;
                             if(handleEditCard(childSocket, payloadStr, targetBoard))
@@ -104,7 +104,7 @@ void ChildThread(long childSocket)
                             }
                             break;
                         }
-                        case 0x03: // EDIT_CONTENT
+                        case static_cast<uint8_t>(OpCode::EDIT_CARD_CONTENT): // EDIT_CARD_CONTENT
                         {
                             BoardState* targetBoard = nullptr;
                             if(handleEditCard(childSocket, payloadStr, targetBoard))
@@ -113,7 +113,7 @@ void ChildThread(long childSocket)
                             }
                             break;
                         }
-                        case 0x04: // CREATE_CARD
+                        case static_cast<uint8_t>(OpCode::CREATE_CARD): // CREATE_CARD
                         {
                             BoardState* targetBoard = nullptr;
                             if(handleCreateCard(childSocket, payloadStr, targetBoard))
@@ -122,7 +122,7 @@ void ChildThread(long childSocket)
                             }
                             break;
                         }
-                        case 0x05: // DELETE_CARD
+                        case static_cast<uint8_t>(OpCode::DELETE_CARD): // DELETE_CARD
                         {                            
                             BoardState* targetBoard = nullptr;
                             if(handleDeleteCard(childSocket, payloadStr, targetBoard))
@@ -131,7 +131,7 @@ void ChildThread(long childSocket)
                             }
                             break;
                         }
-                        case 0x06: // CREATE_CONNECTOR
+                        case static_cast<uint8_t>(OpCode::CREATE_CONNECTOR): // CREATE_CONNECTOR
                         {
                             BoardState* targetBoard = nullptr;
                             if(handleCreateConnector(childSocket, payloadStr, targetBoard))
@@ -140,7 +140,7 @@ void ChildThread(long childSocket)
                             }
                             break;
                         }
-                        case 0x07: // EDIT_CONNECTOR
+                        case static_cast<uint8_t>(OpCode::EDIT_CONNECTOR): // EDIT_CONNECTOR
                         {
                             BoardState* targetBoard = nullptr;
                             if(handleEditConnector(childSocket, payloadStr, targetBoard))
@@ -149,7 +149,7 @@ void ChildThread(long childSocket)
                             }
                             break;
                         }
-                        case 0x08: // DELETE_CONNECTOR
+                        case static_cast<uint8_t>(OpCode::DELETE_CONNECTOR): // DELETE_CONNECTOR
                         {
                             BoardState* targetBoard = nullptr;
                             if(handleDeleteConnector(childSocket, payloadStr, targetBoard))
@@ -158,18 +158,18 @@ void ChildThread(long childSocket)
                             }
                             break;
                         }
-                        case 0x09: // SYNC_BOARD
+                        case static_cast<uint8_t>(OpCode::SYNC_BOARD): // SYNC_BOARD
                         {
                             BoardState* targetBoard = nullptr;
                             if(handleSyncBoard(childSocket, payloadStr, targetBoard))
                             {
                                 json joinPayload = {{"childSocket", childSocket},
                                 {"boardID", targetBoard->boardID}};
-                                broadcastUpdate(targetBoard, childSocket, 0x0A, joinPayload.dump());
+                                broadcastUpdate(targetBoard, childSocket, static_cast<uint8_t>(OpCode::CLIENT_CONNECTED), joinPayload.dump());
                             }
                             break;
                         }
-                        case 0x10: // DISCONNECT
+                        case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
                         {
                             std::cout << "[SERVER] : Received explicit DISCONNECT from: " << childSocket << "\n";
                             cleanupClientSession(childSocket);
@@ -380,7 +380,7 @@ void cleanupClientSession(int clientSocket) {
                 {"boardID", boardID}
             };
 
-            broadcastUpdate(&board, -1, 0x0B, leavePayload.dump());
+            broadcastUpdate(&board, -1, static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED), leavePayload.dump());
 
             std::cout << "[SERVER] : Client " << clientSocket << " removed from Board ID " << boardID << "\n";
         }
