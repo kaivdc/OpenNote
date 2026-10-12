@@ -6,3 +6,5 @@ OpenNoteServer.o
 
 *.exe
 *.o
+imgui/*.o
+imgui/backends/*.o
