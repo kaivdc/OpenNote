@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
+#include <nlohmann/json.hpp>
+#include <cmath>
 
 using namespace std;
 
@@ -32,38 +34,38 @@ struct Color {
     uint8_t a;
 };
 
-inline void to_json(nlohmann::json& json, const Color& color) {
-    json = nlohmann::json{{"r", color.r}, {"g", color.g}, {"b", color.b}, {"a", color.a}};
+inline void to_json(nlohmann::json& j, const Color& color) {
+    j = nlohmann::json{{"r", color.r}, {"g", color.g}, {"b", color.b}, {"a", color.a}};
 }
 
-inline void from_json(const nlohmann::json& json, Color& color) {
-    json.at("r").get_to(color.r);
-    json.at("g").get_to(color.g);
-    json.at("b").get_to(color.b);
-    json.at("a").get_to(color.a);
+inline void from_json(const nlohmann::json& j, Color& color) {
+    j.at("r").get_to(color.r);
+    j.at("g").get_to(color.g);
+    j.at("b").get_to(color.b);
+    j.at("a").get_to(color.a);
 }
 
 struct BoardTheme {
-    Color boardBackGroundColor = {30, 30, 35, 255};
+    Color boardBackgroundColor = {30, 30, 35, 255};
     Color cardColor = {86, 66, 86, 255};
     Color connectorColor = {150, 150, 170, 255};
     Color accentColor = {252, 129, 74, 255};
 };
 
-inline void to_json(nlohmann::json& json, const BoardTheme& theme) {
-    json = nlohmann::json{
-        {"boardBackGroundColor", theme.boardBackGroundColor},
+inline void to_json(nlohmann::json& j, const BoardTheme& theme) {
+    j = nlohmann::json{
+        {"boardBackgroundColor", theme.boardBackgroundColor},
         {"cardColor", theme.cardColor},
         {"connectorColor", theme.connectorColor},
         {"accentColor", theme.accentColor}
     };
 }
 
-inline void from_json(const nlohmann::json& json, BoardTheme& theme) {
-    json.at("boardBackGroundColor").get_to(theme.boardBackGroundColor);
-    json.at("cardColor").get_to(theme.cardColor);
-    json.at("connectorColor").get_to(theme.connectorColor);
-    json.at("accentColor").get_to(theme.accentColor);
+inline void from_json(const nlohmann::json& j, BoardTheme& theme) {
+    j.at("boardBackgroundColor").get_to(theme.boardBackgroundColor);
+    j.at("cardColor").get_to(theme.cardColor);
+    j.at("connectorColor").get_to(theme.connectorColor);
+    j.at("accentColor").get_to(theme.accentColor);
 }
 
 namespace ThemeUtils {
@@ -93,7 +95,7 @@ namespace ThemeUtils {
     inline Color getTextColor(const Color& bg) {
         auto linearize = [](uint8_t channel) -> double {
             double c = static_cast<double>(channel) / 255.0;
-            return (c <= 0.03928) ? (c / 12.92) : std::pow((c + 0.055) / 1.055, 2.4);
+            return (c <= 0.03928) ? (c / 12.92) : pow((c + 0.055) / 1.055, 2.4);
         };
 
         double rLinear = linearize(bg.r);
@@ -114,8 +116,8 @@ struct Card {
     uint32_t cardID;
     float x;
     float y;
-    float width; // > 0 but <= 10
-    float height; // > 0 but <= 10
+    float width; // > 0 but <= 1000
+    float height; // > 0 but <= 1000
     uint32_t zIndex;
     string text; // < 4096
     string mediaURL;
@@ -130,7 +132,7 @@ Color getTextColor() const {
     }
 
     bool isValid() const {
-        return (cardID > 0 && width >= 10.0f && height >= 10.0f && text.length() <= 4096);
+        return (cardID > 0 && width >= 0.0f && width <= 1000.0f && height >= 0.0f && height <= 1000.0f && text.length() <= 4096);
     }
 };
 

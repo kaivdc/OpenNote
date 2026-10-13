@@ -6,5 +6,7 @@
 #include "BoardStructs.h"
 
 GLFWwindow* initRenderer(int width, int height, const char* title);
+void cleanupRenderer(GLFWwindow* window);
+void renderFrame(GLFWwindow* window, BoardState& localBoard);
 
 #endif

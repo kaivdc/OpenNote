@@ -514,11 +514,11 @@ bool handleEditCard(int clientSocket, const string& payloadStr, BoardState*& out
         }
         if (jsonParsed.contains("width")) {
             float newWidth = jsonParsed["width"];
-            if (newWidth >= 10.0f) card.width = newWidth;
+            if (newWidth >= 0.0f && newWidth <= 1000.0f) card.width = newWidth;
         }
         if (jsonParsed.contains("height")) {
             float newHeight = jsonParsed["height"];
-            if (newHeight >= 10.0f) card.height = newHeight;
+            if (newHeight >= 0.0f && newHeight <= 1000.0f) card.height = newHeight;
         }
         if (jsonParsed.contains("text")) {
             string newText = jsonParsed["text"];

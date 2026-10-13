@@ -12,6 +12,7 @@
 #include <vector>
 #include <bit>
 #include "BoardStructs.h"
+#include "ClientRenderer.h"
 
 using namespace std;
 using buffer = vector<uint8_t>;
@@ -78,11 +79,21 @@ buffer AuthRequestPacket(string version, const uint32_t boardID, const string au
 buffer moveCardPacket(uint32_t cardID, float x, float y, float width, float height)
 {
   buffer payload;
-  appendUint32(payload, cardID);
+    appendUint32(payload, cardID);
+    appendUint32(payload, static_cast<uint32_t>(x));
+    appendUint32(payload, static_cast<uint32_t>(y));
+    appendUint32(payload, static_cast<uint32_t>(width));
+    appendUint32(payload, static_cast<uint32_t>(height));
+    return payload;
 }
 
 int main(int argc, char *argv[])
 {
+  std::cout << "[DEBUG] Main started! argc = " << argc << "\n" << std::flush;
+  if (argc < 2) {
+    std::cerr << "Usage: " << argv[0] << " <server_ip>\n";
+    return 1;
+  }
 
   /*
   is the mast file descriptor list and the read file descriptor list needed for this client?
@@ -120,19 +131,39 @@ int main(int argc, char *argv[])
     exit(1);
   }
 
-  //Connection initialization
+std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
 
-  // add the STDIN to the master set
-  FD_SET(STDIN, &master);
+    // Initialize render window
+    GLFWwindow* window = initRenderer(1280, 720, "OpenNote");
+    if (!window) {
+        std::cerr << "[ERROR] :  Failed to init renderer window.\n";
+        close(s);
+        return 1;
+    }
 
-  // add the listener to the master set
-  FD_SET(s, &master);
-
-  /* main loop; get and send lines of text */
-  while (1)
-  {
+    // Initialize localBoard for render testing
+    BoardState localBoard;
+    localBoard.boardID = 1;
     
-  }
+    // Add a test card
+    Card testCard;
+    testCard.cardID = 101;
+    testCard.x = 0.0f;
+    testCard.y = 0.0f;
+    testCard.width = 100.0f;
+    testCard.height = 100.0f;
+    testCard.zIndex = 1;
+    testCard.text = "Hello world";
+    testCard.color = localBoard.theme.cardColor;
+    localBoard.cards[testCard.cardID] = testCard;
 
-  close(s);
+    // Main rendering loop
+    while (!glfwWindowShouldClose(window)) {
+        
+        renderFrame(window, localBoard);
+    }
+
+    cleanupRenderer(window);
+    close(s);
+    return 0;
 }
