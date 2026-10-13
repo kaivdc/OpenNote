@@ -407,16 +407,10 @@ bool handleCreateCard(int clientSocket, const string& payloadStr, BoardState*& o
         newCard.text = jsonParsed.value("text", "");
         newCard.mediaURL = jsonParsed.value("mediaURL", "");
         if (jsonParsed.contains("cardColor")) {
-            newCard.cardColor.r = jsonParsed["cardColor"].value("r", 255);
-            newCard.cardColor.g = jsonParsed["cardColor"].value("g", 255);
-            newCard.cardColor.b = jsonParsed["cardColor"].value("b", 255);
-            newCard.cardColor.a = jsonParsed["cardColor"].value("a", 255);
-        }
-        if (jsonParsed.contains("textColor")) {
-            newCard.textColor.r = jsonParsed["textColor"].value("r", 255);
-            newCard.textColor.g = jsonParsed["textColor"].value("g", 255);
-            newCard.textColor.b = jsonParsed["textColor"].value("b", 255);
-            newCard.textColor.a = jsonParsed["textColor"].value("a", 255);
+            newCard.color.r = jsonParsed["cardColor"].value("r", 255);
+            newCard.color.g = jsonParsed["cardColor"].value("g", 255);
+            newCard.color.b = jsonParsed["cardColor"].value("b", 255);
+            newCard.color.a = jsonParsed["cardColor"].value("a", 255);
         }
     
 
@@ -565,6 +559,7 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr, BoardState*& ou
 
             BoardState newBoard;
             newBoard.boardID = boardID;
+            newBoard.theme = BoardTheme{};
             activeBoards[boardID] = newBoard;
         }
 
