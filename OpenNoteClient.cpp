@@ -134,7 +134,8 @@ int main(int argc, char *argv[])
 std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
 
     // Initialize render window
-    GLFWwindow* window = initRenderer(1280, 720, "OpenNote");
+    ClientRenderer renderer;
+    GLFWwindow* window = renderer.initialize(1280, 720, "OpenNote");
     if (!window) {
         std::cerr << "[ERROR] :  Failed to init renderer window.\n";
         close(s);
@@ -147,7 +148,7 @@ std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
     
     // Add a test card
     Card testCard;
-    testCard.cardID = 101;
+    testCard.cardID = 001;
     testCard.x = 0.0f;
     testCard.y = 0.0f;
     testCard.width = 100.0f;
@@ -157,13 +158,36 @@ std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
     testCard.color = localBoard.theme.cardColor;
     localBoard.cards[testCard.cardID] = testCard;
 
+    Card testCard2;
+    testCard2.cardID = 002;
+    testCard2.x = 200.0f;
+    testCard2.y = 200.0f;
+    testCard2.width = 100.0f;
+    testCard2.height = 100.0f;
+    testCard2.zIndex = 1;
+    testCard2.text = "Hello world";
+    testCard2.color = localBoard.theme.cardColor;
+    localBoard.cards[testCard2.cardID] = testCard2;
+
+    Connector testConnector;
+    testConnector.connectorID = 001;
+    testConnector.color = localBoard.theme.connectorColor;
+    testConnector.sourceCardID = 001;
+    testConnector.targetCardID = 002;
+    testConnector.thickness = 5;
+    localBoard.connectors[testConnector.connectorID] = testConnector;
+
     // Main rendering loop
-    while (!glfwWindowShouldClose(window)) {
-        
-        renderFrame(window, localBoard);
+    while (!renderer.shouldClose()) {
+        renderer.updateAndRender(localBoard);
     }
 
-    cleanupRenderer(window);
-    close(s);
+    if (!window) {
+        return -1;
+    }
+
+
+
+    renderer.shutdown();
     return 0;
 }
