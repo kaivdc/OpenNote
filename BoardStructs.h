@@ -159,6 +159,9 @@ struct BoardState {
     vector<int> connectedClients;
     BoardTheme theme;
 
+    uint32_t nextCardID = 1;
+    uint32_t nextConnectorID = 1;
+
     bool isValid() const {
         return (boardID > 0);
     }
@@ -173,6 +176,49 @@ struct BoardState {
         bool targetExists = cards.find(connector.targetCardID) != cards.end();
 
         return sourceExists && targetExists;
+    }
+
+    Card& createCardAt(float x, float y, const string& text = "New Card", std::optional<Color> color = std::nullopt) {
+        uint32_t assignedID = nextCardID++;
+
+        Card card;
+        card.cardID = assignedID;
+        card.x = x;
+        card.y = y;
+        card.width = 160.0f;
+        card.height = 100.0f;
+        card.zIndex = 1;
+        card.text = text;
+        
+        if(color.has_value())
+        {
+            color.value() = theme.cardColor; 
+        }
+
+        card.color = color.value();
+
+        cards[assignedID] = card;
+        return cards[assignedID];
+    }
+
+    Connector& createConnector(uint32_t sourceCardID, uint32_t targetCardID, float thickness = 10.0f, std::optional<Color> color = std::nullopt) {
+        uint32_t assignedID = nextConnectorID++;
+
+        Connector connector;
+        connector.connectorID = assignedID;
+        connector.sourceCardID = sourceCardID;
+        connector.targetCardID = targetCardID;
+        connector.thickness = thickness;
+        
+        if(color.has_value())
+        {
+            color.value() = theme.connectorColor; 
+        }
+
+        connector.color = color.value();
+
+        connectors[assignedID] = connector;
+        return connectors[assignedID];
     }
 };
 
