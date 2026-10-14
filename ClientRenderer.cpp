@@ -108,6 +108,7 @@ void ClientRenderer::updateAndRender(BoardState& localBoard) {
 
     drawGrid(draw_list, localBoard, board_p0, board_p1, boardCenter);
     drawConnectors(draw_list, localBoard, boardCenter);
+    drawConnectionPreview(draw_list, localBoard, boardCenter);
     drawCards(draw_list, localBoard, boardCenter);
 
     draw_list->PopClipRect();
@@ -126,8 +127,17 @@ void ClientRenderer::updateAndRender(BoardState& localBoard) {
 }
 
 void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 board_p0, ImVec2 board_p1, ImVec2 boardCenter, bool hovered, bool active) {
-    // Board panning
-    if (active && (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f))) {
+    // Board Panning (Middle Mouse always, Right Mouse if dragged)
+    // dragThreshold represents number of pixels required for movement to be considered a drag when right clicking
+    float dragThreshold = 3.0f; 
+    bool isMiddleDragging = active && ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f);
+    bool isRightDragActive = ImGui::IsMouseDragging(ImGuiMouseButton_Right, dragThreshold); 
+
+    if (isRightDragActive) {
+        isRightDragging = true;
+    }
+
+    if (isMiddleDragging || isRightDragging) {
         ImVec2 delta = ImGui::GetIO().MouseDelta;
         camera.x -= delta.x / camera.zoom;
         camera.y -= delta.y / camera.zoom;
@@ -171,6 +181,129 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 board_p0, ImVec2
             card.x += delta.x / camera.zoom;
             card.y += delta.y / camera.zoom;
         }
+    }
+
+    // Right click release detection
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        // If the user released the right button without dragging, defer logic to context menu
+        if (!isRightDragging && hovered) {
+            ImVec2 mousePos = ImGui::GetIO().MousePos;
+            
+            // Convert screen coordinates to world space
+            contextMenuWorldPos.x = camera.x + (mousePos.x - boardCenter.x) / camera.zoom;
+            contextMenuWorldPos.y = camera.y + (mousePos.y - boardCenter.y) / camera.zoom;
+
+            // Check if right-clicked on a specific card
+            bool clickedOnCard = false;
+            uint32_t hitCardID = 0;
+
+            for (const auto& [id, card] : localBoard.cards) {
+                float screenX = boardCenter.x + (card.x - camera.x) * camera.zoom;
+                float screenY = boardCenter.y + (card.y - camera.y) * camera.zoom;
+                float screenW = card.width * camera.zoom;
+                float screenH = card.height * camera.zoom;
+
+                if (mousePos.x >= screenX && mousePos.x <= screenX + screenW &&
+                    mousePos.y >= screenY && mousePos.y <= screenY + screenH) {
+                    clickedOnCard = true;
+                    hitCardID = card.cardID;
+                    break;
+                }
+            }
+
+            // Set context based on what was hit
+            if (clickedOnCard) {
+                currentMenuTarget = { MenuContextType::Card, hitCardID };
+            } else {
+                currentMenuTarget = { MenuContextType::Background, 0 };
+            }
+
+            ImGui::OpenPopup("CanvasContextMenu");
+        }
+
+        // Reset drag tracking state when the button is released
+        isRightDragging = false;
+    }
+
+    // Process context menu logic
+    handleContextMenu(localBoard, boardCenter, currentMenuTarget);
+
+    if (isConnecting) {
+        // Error detection for deleted source card
+        if (localBoard.cards.find(connectingSourceCardID) == localBoard.cards.end()) {
+            isConnecting = false;
+        }
+        // Cancel if user hits escape key
+        else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            isConnecting = false;
+        }
+        // Check for left click on card
+        else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            ImVec2 mousePos = ImGui::GetIO().MousePos;
+            uint32_t clickedTargetCardID = 0;
+            bool clickedACard = false;
+
+            // Hit-test all cards
+            for (const auto& [id, card] : localBoard.cards) {
+                float screenX = boardCenter.x + (card.x - camera.x) * camera.zoom;
+                float screenY = boardCenter.y + (card.y - camera.y) * camera.zoom;
+                float screenW = card.width * camera.zoom;
+                float screenH = card.height * camera.zoom;
+
+                if (mousePos.x >= screenX && mousePos.x <= screenX + screenW &&
+                    mousePos.y >= screenY && mousePos.y <= screenY + screenH) {
+                    clickedTargetCardID = card.cardID;
+                    clickedACard = true;
+                    break;
+                }
+            }
+
+            // create connector if valid second card is selected & exit connecting mode
+            if (clickedACard) {
+                localBoard.createConnector(connectingSourceCardID, clickedTargetCardID);
+                isConnecting = false;
+            }
+        }
+    }
+}
+
+void ClientRenderer::handleContextMenu(BoardState& localBoard, ImVec2 boardCenter, const ContextMenuTarget& context) {
+    if (ImGui::BeginPopup("CanvasContextMenu")) {
+        
+        // Background/general right click menu
+        if (context.type == MenuContextType::Background) {
+
+            if (ImGui::MenuItem("Create Card")) {
+                float spawnX = contextMenuWorldPos.x;
+                float spawnY = contextMenuWorldPos.y;
+                localBoard.createCardAt(spawnX, spawnY, "Enter text...");
+            }
+        }
+        
+        // Card right click menu
+        else if (context.type == MenuContextType::Card) {
+            ImGui::TextDisabled("Card Options (ID: %u)", context.targetID);
+            ImGui::Separator();
+
+            // Connection drawing option
+            if (ImGui::MenuItem("Connect to...")) {
+                isConnecting = true;
+                connectingSourceCardID = context.targetID;
+            }
+
+            // Delete card option (new options can be expanded under here)
+            if (ImGui::MenuItem("Delete Card")) {
+                localBoard.deleteCard(context.targetID);
+            }
+        }
+
+        // Connector right click menu
+        else if (context.type == MenuContextType::Connector) {
+            ImGui::TextDisabled("Connector Options");
+            ImGui::Separator();
+        }
+
+        ImGui::EndPopup();
     }
 }
 
@@ -219,6 +352,27 @@ void ClientRenderer::drawConnectors(ImDrawList* draw_list, BoardState& localBoar
             uint32_t connColorIm = ThemeUtils::toImColor(conn.color);
             draw_list->AddLine(srcCenter, tgtCenter, connColorIm, conn.thickness * camera.zoom);
         }
+    }
+}
+
+void ClientRenderer::drawConnectionPreview(ImDrawList* draw_list, BoardState& localBoard, ImVec2 boardCenter) {
+    if (!isConnecting) return;
+
+    // Verify source card still exists before drawing preview
+    if (localBoard.cards.find(connectingSourceCardID) != localBoard.cards.end()) {
+        const Card& srcCard = localBoard.cards.at(connectingSourceCardID);
+        
+        ImVec2 srcCenter(
+            boardCenter.x + (srcCard.x + srcCard.width / 2.0f - camera.x) * camera.zoom,
+            boardCenter.y + (srcCard.y + srcCard.height / 2.0f - camera.y) * camera.zoom
+        );
+        ImVec2 mousePos = ImGui::GetIO().MousePos;
+
+        uint32_t previewColor = ThemeUtils::toImColor(localBoard.theme.connectorColor);
+        draw_list->AddLine(srcCenter, mousePos, previewColor, 10.0f * camera.zoom);
+    } else {
+        // Fallback in case card was deleted in the split second we rendered (stupid)
+        isConnecting = false;
     }
 }
 

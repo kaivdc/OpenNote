@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <nlohmann/json.hpp>
 #include <cmath>
+#include <iostream>
 
 using namespace std;
 
@@ -179,15 +180,15 @@ struct BoardState {
     }
 
     // Factory method returning pointer to connector + adding it to board state.
-    Card* createCardAt(float x, float y, const string& text = "New Card", std::optional<Color> color = std::nullopt) {
-        uint32_t assignedID = nextCardID++;
+    Card* createCardAt(float x, float y, const string& text = "New Card", std::optional<Color> color = std::nullopt, float width = 100.0f, float height = 100.0f) {
+        uint32_t assignedID = nextCardID;
 
         Card card;
         card.cardID = assignedID;
-        card.x = x;
-        card.y = y;
-        card.width = 100.0f;
-        card.height = 100.0f;
+        card.width = width;
+        card.height = height;
+        card.x = x - (width / 2.0f);
+        card.y = y - (height / 2.0f);
         card.zIndex = 1;
         card.text = text;
         
@@ -197,6 +198,8 @@ struct BoardState {
             cerr << "[ERROR] : Card creation failed (size or text length out of bounds).\n";
             return nullptr;
         }
+
+        nextCardID++;
 
         cards[assignedID] = card;
         return &cards[assignedID];
@@ -209,7 +212,7 @@ struct BoardState {
             return nullptr;
         }
         
-        uint32_t assignedID = nextConnectorID++;
+        uint32_t assignedID = nextConnectorID;
 
         Connector connector;
         connector.connectorID = assignedID;
@@ -223,6 +226,8 @@ struct BoardState {
             cerr << "[ERROR] : Connector creation failed (Thickness out of bounds).\n";
             return nullptr;
         }
+
+        nextConnectorID++;
 
         connectors[assignedID] = connector;
         return &connectors[assignedID];
