@@ -178,30 +178,37 @@ struct BoardState {
         return sourceExists && targetExists;
     }
 
-    Card& createCardAt(float x, float y, const string& text = "New Card", std::optional<Color> color = std::nullopt) {
+    // Factory method returning pointer to connector + adding it to board state.
+    Card* createCardAt(float x, float y, const string& text = "New Card", std::optional<Color> color = std::nullopt) {
         uint32_t assignedID = nextCardID++;
 
         Card card;
         card.cardID = assignedID;
         card.x = x;
         card.y = y;
-        card.width = 160.0f;
+        card.width = 100.0f;
         card.height = 100.0f;
         card.zIndex = 1;
         card.text = text;
         
-        if(color.has_value())
-        {
-            color.value() = theme.cardColor; 
+        card.color = color.value_or(theme.cardColor);
+
+        if (!card.isValid()) {
+            cerr << "[ERROR] : Card creation failed (size or text length out of bounds).\n";
+            return nullptr;
         }
 
-        card.color = color.value();
-
         cards[assignedID] = card;
-        return cards[assignedID];
+        return &cards[assignedID];
     }
 
-    Connector& createConnector(uint32_t sourceCardID, uint32_t targetCardID, float thickness = 10.0f, std::optional<Color> color = std::nullopt) {
+    // Factory method returning pointer to connector for success/fail + adding to boardstate.
+    Connector* createConnector(uint32_t sourceCardID, uint32_t targetCardID, float thickness = 10.0f, std::optional<Color> color = std::nullopt) {
+        if (cards.find(sourceCardID) == cards.end() || cards.find(targetCardID) == cards.end()) {
+            cerr << "[ERROR] : Connector creation failed, sourceCardID or targetCardID does not exist.\n";
+            return nullptr;
+        }
+        
         uint32_t assignedID = nextConnectorID++;
 
         Connector connector;
@@ -209,16 +216,62 @@ struct BoardState {
         connector.sourceCardID = sourceCardID;
         connector.targetCardID = targetCardID;
         connector.thickness = thickness;
-        
-        if(color.has_value())
-        {
-            color.value() = theme.connectorColor; 
+
+        connector.color = color.value_or(theme.connectorColor);
+
+        if (!connector.isValid()) {
+            cerr << "[ERROR] : Connector creation failed (Thickness out of bounds).\n";
+            return nullptr;
         }
 
-        connector.color = color.value();
-
         connectors[assignedID] = connector;
-        return connectors[assignedID];
+        return &connectors[assignedID];
+    }
+
+    bool deleteCard(uint32_t cardID) {
+        auto it = cards.find(cardID);
+        if (it == cards.end()) {
+            cerr << "[ERROR] : Card deletion failed, cardID does not exist.\n";
+            return false;
+        }
+
+        // Delete associated connectors
+        for (auto connIt = connectors.begin(); connIt != connectors.end(); ) {
+            if (connIt->second.sourceCardID == cardID || connIt->second.targetCardID == cardID) {
+                connIt = connectors.erase(connIt);
+            } else {
+                ++connIt;
+            }
+        }
+
+        cards.erase(it);
+        return true;
+    }
+
+    // Destructor method for connector
+    bool deleteConnector(uint32_t connectorID) {
+        auto it = connectors.find(connectorID);
+        if (it == connectors.end()) {
+            cerr << "[ERROR] : Connecter deletion failed, connectorID does not exist.";
+            return false;
+        }
+        connectors.erase(it);
+        return true;
+    }
+
+    // Helper method to update local board state ID tracking on sync.
+    void updateCountersAfterSync() {
+        uint32_t maxCard = 0;
+        for (const auto& [id, _] : cards) {
+            if (id > maxCard) maxCard = id;
+        }
+        nextCardID = maxCard + 1;
+
+        uint32_t maxConn = 0;
+        for (const auto& [id, _] : connectors) {
+            if (id > maxConn) maxConn = id;
+        }
+        nextConnectorID = maxConn + 1;
     }
 };
 
