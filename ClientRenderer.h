@@ -23,11 +23,20 @@ struct ContextMenuTarget {
     uint32_t targetID = 0;
 };
 
+// Enum for which edge/corner of a card is being resized
+enum class ResizeHandle {
+    None,
+    N, S, E, W,
+    NE, NW, SE, SW
+};
+
 class ClientRenderer {
 private:
     GLFWwindow* window = nullptr;
     Camera camera;
     uint32_t draggedCardID = 0;
+    uint32_t resizingCardID = 0;
+    ResizeHandle activeResizeHandle = ResizeHandle::None;
     ImVec2 contextMenuWorldPos = {0.0f, 0.0f};
     ContextMenuTarget currentMenuTarget;
     ContextMenuTarget selection;
@@ -58,6 +67,11 @@ private:
     uint32_t submitCardHitboxes(BoardState& localBoard, ImVec2 boardCenter);
     uint32_t hitTestConnector(const BoardState& localBoard, ImVec2 screenPos, ImVec2 boardCenter) const;
     float distanceToSegment(ImVec2 point, ImVec2 a, ImVec2 b) const;
+
+    // Card resize handles (anchored scaling from edges/corners)
+    ResizeHandle hitTestResizeHandle(const Card& card, ImVec2 mousePos, ImVec2 boardCenter) const;
+    void applyCardResize(Card& card);
+    void drawResizeHandles(ImDrawList* draw_list, const Card& card, const BoardTheme& theme, ImVec2 boardCenter);
 
     // Selection helpers
     bool isSelected(MenuContextType type, uint32_t id) const;

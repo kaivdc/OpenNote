@@ -52,6 +52,7 @@ struct BoardTheme {
     Color cardColor = {86, 66, 86, 255};
     Color connectorColor = {150, 150, 170, 255};
     Color accentColor = {252, 129, 74, 255};
+    Color importantElements = {255, 255, 255, 255};
 };
 
 inline void to_json(nlohmann::json& j, const BoardTheme& theme) {
@@ -59,7 +60,8 @@ inline void to_json(nlohmann::json& j, const BoardTheme& theme) {
         {"boardBackgroundColor", theme.boardBackgroundColor},
         {"cardColor", theme.cardColor},
         {"connectorColor", theme.connectorColor},
-        {"accentColor", theme.accentColor}
+        {"accentColor", theme.accentColor},
+        {"importantElements", theme.importantElements}
     };
 }
 
@@ -68,6 +70,7 @@ inline void from_json(const nlohmann::json& j, BoardTheme& theme) {
     j.at("cardColor").get_to(theme.cardColor);
     j.at("connectorColor").get_to(theme.connectorColor);
     j.at("accentColor").get_to(theme.accentColor);
+    if (j.contains("importantElements")) j.at("importantElements").get_to(theme.importantElements);
 }
 
 namespace ThemeUtils {

@@ -11,6 +11,12 @@ using namespace std;
 
 static Camera boardCamera;
 
+// Card resize tuning (world units for sizes, screen pixels for handle grab zones)
+static constexpr float kMinCardSize = 20.0f;
+static constexpr float kMaxCardSize = 1000.0f;
+static constexpr float kResizeHandleSize = 10.0f;
+static constexpr float kResizeSideHandleLength = kResizeHandleSize * 4.0f;
+
 GLFWwindow* ClientRenderer::initialize(int width, int height, const char* title) {
     if (!glfwInit()) {
         cerr << "[ERROR] : Failed to initialize GLFW\n";
@@ -140,9 +146,14 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, boo
     // Camera panning + zoom
     handleCameraControls(hovered);
 
-    // Reset card dragging state once the left button is released
+    // Remember if a resize was in progress so releasing outside the card keeps the selection
+    bool wasResizing = (resizingCardID != 0);
+
+    // Reset card dragging / resizing state once the left button is released
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         draggedCardID = 0;
+        resizingCardID = 0;
+        activeResizeHandle = ResizeHandle::None;
     }
 
     uint32_t hoveredCardID = submitCardHitboxes(localBoard, boardCenter);
@@ -156,7 +167,7 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, boo
     bool backgroundHovered = hovered && hoveredCardID == 0 && hoveredConnectorID == 0;
 
     // Update the current selection (panning + zooming never clear it)
-    handleObjectSelection(hoveredCardID, hoveredConnectorID, backgroundHovered);
+    handleObjectSelection(hoveredCardID, hoveredConnectorID, backgroundHovered && !wasResizing);
 
     // Double clicking an object opens its editing sidebar for that object
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -232,6 +243,18 @@ void ClientRenderer::handleCameraControls(bool hovered) {
 uint32_t ClientRenderer::submitCardHitboxes(BoardState& localBoard, ImVec2 boardCenter) {
     uint32_t hoveredCardID = 0;
 
+    // A click on a resize handle of the selected card starts a resize, even on the part outside the card
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && selection.type == MenuContextType::Card) {
+        auto it = localBoard.cards.find(selection.targetID);
+        if (it != localBoard.cards.end()) {
+            ResizeHandle handle = hitTestResizeHandle(it->second, ImGui::GetIO().MousePos, boardCenter);
+            if (handle != ResizeHandle::None) {
+                resizingCardID = selection.targetID;
+                activeResizeHandle = handle;
+            }
+        }
+    }
+
     for (auto& [id, card] : localBoard.cards) {
         ImVec2 screenPos = worldToScreen(card.x, card.y, boardCenter);
         ImVec2 screenSize(card.width * camera.zoom, card.height * camera.zoom);
@@ -239,7 +262,6 @@ uint32_t ClientRenderer::submitCardHitboxes(BoardState& localBoard, ImVec2 board
             continue;
         }
 
-        // One invisible button per card replaces the manual bounding-box hit test
         ImGui::PushID(static_cast<int>(card.cardID));
         ImGui::SetCursorScreenPos(screenPos);
         ImGui::InvisibleButton("##cardHitbox", screenSize, ImGuiButtonFlags_MouseButtonLeft);
@@ -248,15 +270,22 @@ uint32_t ClientRenderer::submitCardHitboxes(BoardState& localBoard, ImVec2 board
             hoveredCardID = card.cardID;
         }
 
-        // A left press on a card grabs it for dragging (only one card at a time)
-        // Dragging a card also selects it, so the sidebar keeps it in focus
+        // A left click on a card grabs it for dragging (only one card at a time)
         if (ImGui::IsItemActive()) {
-            if (draggedCardID == 0) {
+            if (draggedCardID == 0 && resizingCardID == 0) {
                 draggedCardID = card.cardID;
             }
             selection = { MenuContextType::Card, card.cardID };
         }
         ImGui::PopID();
+    }
+
+    // Resize the grabbed card, anchoring the opposite edge
+    if (resizingCardID != 0) {
+        auto it = localBoard.cards.find(resizingCardID);
+        if (it != localBoard.cards.end()) {
+            applyCardResize(it->second);
+        }
     }
 
     // Move the grabbed card by the mouse delta
@@ -270,6 +299,147 @@ uint32_t ClientRenderer::submitCardHitboxes(BoardState& localBoard, ImVec2 board
     }
 
     return hoveredCardID;
+}
+
+// Finds which resize handle (if any) sits under the mouse for a given card (screen scale adjusted)
+ResizeHandle ClientRenderer::hitTestResizeHandle(const Card& card, ImVec2 mousePos, ImVec2 boardCenter) const {
+    ImVec2 p0 = worldToScreen(card.x, card.y, boardCenter);
+    ImVec2 p1 = worldToScreen(card.x + card.width, card.y + card.height, boardCenter);
+
+    float half = kResizeHandleSize * 0.5f;
+    float left = p0.x, top = p0.y;
+    float right = p1.x, bottom = p1.y;
+    float midX = (left + right) * 0.5f;
+    float midY = (top + bottom) * 0.5f;
+
+    // Corners take priority over edges when zones overlap
+    auto nearCorner = [&](float hx, float hy) {
+        return fabsf(mousePos.x - hx) <= half && fabsf(mousePos.y - hy) <= half;
+    };
+
+    auto inRect = [&](float rMinX, float rMinY, float rMaxX, float rMaxY) {
+        return mousePos.x >= rMinX && mousePos.x <= rMaxX && mousePos.y >= rMinY && mousePos.y <= rMaxY;
+    };
+    float halfLen = kResizeSideHandleLength * 0.5f;
+
+    if (nearCorner(left, top))     return ResizeHandle::NW;
+    if (nearCorner(right, top))    return ResizeHandle::NE;
+    if (nearCorner(left, bottom))  return ResizeHandle::SW;
+    if (nearCorner(right, bottom)) return ResizeHandle::SE;
+
+    // North/South edges
+    if (inRect(midX - halfLen, top - half, midX + halfLen, top + half))    return ResizeHandle::N;
+    if (inRect(midX - halfLen, bottom - half, midX + halfLen, bottom + half)) return ResizeHandle::S;
+    // West/East edges
+    if (inRect(left - half, midY - halfLen, left + half, midY + halfLen))    return ResizeHandle::W;
+    if (inRect(right - half, midY - halfLen, right + half, midY + halfLen))  return ResizeHandle::E;
+
+    return ResizeHandle::None;
+}
+
+// Resizes a card by the mouse delta, anchoring the edge opposite the grabbed handle.
+void ClientRenderer::applyCardResize(Card& card) {
+    ImVec2 delta = ImGui::GetIO().MouseDelta;
+    float dx = delta.x / camera.zoom;
+    float dy = delta.y / camera.zoom;
+
+    float left = card.x;
+    float top = card.y;
+    float right = card.x + card.width;
+    float bottom = card.y + card.height;
+
+    switch (activeResizeHandle) {
+        case ResizeHandle::NW: left += dx;  top += dy;  break;
+        case ResizeHandle::N:  top += dy;                break;
+        case ResizeHandle::NE: right += dx; top += dy;   break;
+        case ResizeHandle::E:  right += dx;              break;
+        case ResizeHandle::SE: right += dx; bottom += dy; break;
+        case ResizeHandle::S:  bottom += dy;             break;
+        case ResizeHandle::SW: left += dx;  bottom += dy; break;
+        case ResizeHandle::W:  left += dx;               break;
+        default: return;
+    }
+
+    // Clamp the moving edge to keep the card within the valid size range
+    if (right - left < kMinCardSize) {
+        if (activeResizeHandle == ResizeHandle::W || activeResizeHandle == ResizeHandle::NW || activeResizeHandle == ResizeHandle::SW)
+            left = right - kMinCardSize;
+        else
+            right = left + kMinCardSize;
+    } else if (right - left > kMaxCardSize) {
+        if (activeResizeHandle == ResizeHandle::W || activeResizeHandle == ResizeHandle::NW || activeResizeHandle == ResizeHandle::SW)
+            left = right - kMaxCardSize;
+        else
+            right = left + kMaxCardSize;
+    }
+
+    if (bottom - top < kMinCardSize) {
+        if (activeResizeHandle == ResizeHandle::N || activeResizeHandle == ResizeHandle::NW || activeResizeHandle == ResizeHandle::NE)
+            top = bottom - kMinCardSize;
+        else
+            bottom = top + kMinCardSize;
+    } else if (bottom - top > kMaxCardSize) {
+        if (activeResizeHandle == ResizeHandle::N || activeResizeHandle == ResizeHandle::NW || activeResizeHandle == ResizeHandle::NE)
+            top = bottom - kMaxCardSize;
+        else
+            bottom = top + kMaxCardSize;
+    }
+
+    card.x = left;
+    card.y = top;
+    card.width = right - left;
+    card.height = bottom - top;
+}
+
+// Draws the resize handles and sets the matching cursor for a card
+void ClientRenderer::drawResizeHandles(ImDrawList* draw_list, const Card& card, const BoardTheme& theme, ImVec2 boardCenter) {
+    ImVec2 p0 = worldToScreen(card.x, card.y, boardCenter);
+    ImVec2 p1 = worldToScreen(card.x + card.width, card.y + card.height, boardCenter);
+
+    float half = kResizeHandleSize * 0.5f;
+    float left = p0.x, top = p0.y;
+    float right = p1.x, bottom = p1.y;
+    float midX = (left + right) * 0.5f;
+    float midY = (top + bottom) * 0.5f;
+
+    // All handles use the theme's importantElements color
+    uint32_t handleCol = ThemeUtils::toImColor(theme.importantElements);
+
+    // Corners are square
+    struct HandlePoint { float x, y; };
+    HandlePoint corners[4] = {
+        {left, top}, {right, top}, {left, bottom}, {right, bottom}
+    };
+    for (const auto& h : corners) {
+        draw_list->AddRectFilled(
+            ImVec2(h.x - half, h.y - half),
+            ImVec2(h.x + half, h.y + half),
+            handleCol, 2.0f);
+    }
+
+    // Side handles are rectangular and 4x longer than a corner
+    float halfLen = kResizeSideHandleLength * 0.5f;
+
+    // North/South resize handles
+    draw_list->AddRectFilled(ImVec2(midX - halfLen, top - half), ImVec2(midX + halfLen, top + half), handleCol, 2.0f);
+    draw_list->AddRectFilled(ImVec2(midX - halfLen, bottom - half), ImVec2(midX + halfLen, bottom + half), handleCol, 2.0f);
+    // West/East resize handles
+    draw_list->AddRectFilled(ImVec2(left - half, midY - halfLen), ImVec2(left + half, midY + halfLen), handleCol, 2.0f);
+    draw_list->AddRectFilled(ImVec2(right - half, midY - halfLen), ImVec2(right + half, midY + halfLen), handleCol, 2.0f);
+
+    // Cursor parity with resize handles
+    ResizeHandle hovered = hitTestResizeHandle(card, ImGui::GetIO().MousePos, boardCenter);
+    switch (hovered) {
+        case ResizeHandle::N:
+        case ResizeHandle::S:    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS); break;
+        case ResizeHandle::E:
+        case ResizeHandle::W:    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); break;
+        case ResizeHandle::NE:
+        case ResizeHandle::SW:   ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW); break;
+        case ResizeHandle::NW:
+        case ResizeHandle::SE:   ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE); break;
+        default: break;
+    }
 }
 
 uint32_t ClientRenderer::hitTestConnector(const BoardState& localBoard, ImVec2 screenPos, ImVec2 boardCenter) const {
@@ -521,6 +691,14 @@ void ClientRenderer::drawCards(ImDrawList* draw_list, BoardState& localBoard, Im
         draw_list->PushClipRect(cardMin, cardMax, true);
         draw_list->AddText(ImGui::GetFont(), fontSize, ImVec2(cardMin.x + textPadding, cardMin.y + textPadding), textCol, card.text.c_str(), NULL, wrapWidth);
         draw_list->PopClipRect();
+    }
+
+    // Draw resize handles last so they sit on top of every card
+    if (selection.type == MenuContextType::Card) {
+        auto it = localBoard.cards.find(selection.targetID);
+        if (it != localBoard.cards.end()) {
+            drawResizeHandles(draw_list, it->second, localBoard.theme, boardCenter);
+        }
     }
 }
 
