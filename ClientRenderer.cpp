@@ -761,6 +761,21 @@ void ClientRenderer::drawCardOptions(BoardState& localBoard) {
         card.text = textBuffer;
     }
 
+    // Card size editors
+    ImGui::TextUnformatted("Size X:");
+    ImGui::InputFloat("##sizeX", &card.width, 1.0f, 1.0f, "%.2f");
+    if (!ImGui::IsItemActive()) {
+        if (card.width < kMinCardSize) card.width = kMinCardSize;
+        if (card.width > kMaxCardSize) card.width = kMaxCardSize;
+    }
+
+    ImGui::TextUnformatted("Size Y:");
+    ImGui::InputFloat("##sizeY", &card.height, 1.0f, 1.0f, "%.2f");
+    if (!ImGui::IsItemActive()) {
+        if (card.height < kMinCardSize) card.height = kMinCardSize;
+        if (card.height > kMaxCardSize) card.height = kMaxCardSize;
+    }
+
     // Need color editor
 }
 
