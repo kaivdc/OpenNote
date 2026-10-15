@@ -31,6 +31,7 @@ private:
     ImVec2 contextMenuWorldPos = {0.0f, 0.0f};
     ContextMenuTarget currentMenuTarget;
     ContextMenuTarget selection;
+    bool selectionSidebarOpen = false;
 
     bool isRightDragging = false;
     bool isMiddleDragging = false;
@@ -74,6 +75,12 @@ private:
 
     // Hook for the selection sidebar (per-object editing options)
     void drawSelectionSidebar(BoardState& localBoard);
+    void drawCardOptions(BoardState& localBoard);
+    void drawConnectorOptions(BoardState& localBoard);
+    const char* getSelectionTitle(MenuContextType type) const;
+
+    // Applies the board theme to the global ImGui style colors
+    void applyTheme(const BoardTheme& theme);
 };
 
 #endif

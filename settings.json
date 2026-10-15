@@ -1,5 +1,5 @@
 {
-    "defaultCardHeight": 100.0,
-    "defaultCardWidth": 100.0,
+    "defaultCardHeight": 250.0,
+    "defaultCardWidth": 250.0,
     "defaultConnectorThickness": 10.0
 }

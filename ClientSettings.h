@@ -8,8 +8,8 @@ using json = nlohmann::json;
 
 struct Settings {
     // Default Card Dimensions
-    float defaultCardWidth = 100.0f;
-    float defaultCardHeight = 100.0f;
+    float defaultCardWidth = 250.0f;
+    float defaultCardHeight = 250.0f;
 
     // Default Connector width
     float defaultConnectorThickness = 10.0f;

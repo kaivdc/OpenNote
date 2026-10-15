@@ -5,6 +5,7 @@
 #include <iostream>
 #include "BoardStructs.h"
 #include <cmath>
+#include <cstdio>
 
 using namespace std;
 
@@ -56,6 +57,9 @@ void ClientRenderer::updateAndRender(BoardState& localBoard) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    // Apply the board theme to the ImGui elements
+    applyTheme(localBoard.theme);
 
     // Board window set to display size
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -153,6 +157,17 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, boo
 
     // Update the current selection (panning + zooming never clear it)
     handleObjectSelection(hoveredCardID, hoveredConnectorID, backgroundHovered);
+
+    // Double clicking an object opens its editing sidebar for that object
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (hoveredCardID != 0) {
+            selection = { MenuContextType::Card, hoveredCardID };
+            selectionSidebarOpen = true;
+        } else if (hoveredConnectorID != 0) {
+            selection = { MenuContextType::Connector, hoveredConnectorID };
+            selectionSidebarOpen = true;
+        }
+    }
 
     // Right click without dragging opens the context menu for whatever is under the cursor
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !isRightDragging && hovered) {
@@ -258,10 +273,11 @@ uint32_t ClientRenderer::submitCardHitboxes(BoardState& localBoard, ImVec2 board
 }
 
 uint32_t ClientRenderer::hitTestConnector(const BoardState& localBoard, ImVec2 screenPos, ImVec2 boardCenter) const {
-    // Tolerance is measured in screen pixels so the hit width stays consistent across zoom levels
-    const float hitTolerance = 8.0f;
+    // Keep a small screen-space padding so thin connectors stay clickable, then
+    // grow the hit area with the connector's on-screen thickness.
+    const float hitPadding = 6.0f;
     uint32_t bestConnectorID = 0;
-    float bestDistance = hitTolerance;
+    float bestDistance = 1e30f;
 
     for (const auto& [id, conn] : localBoard.connectors) {
         auto srcIt = localBoard.cards.find(conn.sourceCardID);
@@ -276,8 +292,9 @@ uint32_t ClientRenderer::hitTestConnector(const BoardState& localBoard, ImVec2 s
         ImVec2 srcCenter = worldToScreen(src.x + src.width / 2.0f, src.y + src.height / 2.0f, boardCenter);
         ImVec2 tgtCenter = worldToScreen(tgt.x + tgt.width / 2.0f, tgt.y + tgt.height / 2.0f, boardCenter);
 
+        float halfWidth = conn.thickness * camera.zoom * 0.5f + hitPadding;
         float distance = distanceToSegment(screenPos, srcCenter, tgtCenter);
-        if (distance < bestDistance) {
+        if (distance <= halfWidth && distance < bestDistance) {
             bestDistance = distance;
             bestConnectorID = conn.connectorID;
         }
@@ -445,7 +462,7 @@ void ClientRenderer::drawConnectors(ImDrawList* draw_list, BoardState& localBoar
         ImVec2 srcCenter = worldToScreen(src.x + src.width / 2.0f, src.y + src.height / 2.0f, boardCenter);
         ImVec2 tgtCenter = worldToScreen(tgt.x + tgt.width / 2.0f, tgt.y + tgt.height / 2.0f, boardCenter);
 
-        // Selected connectors are wrapped in an accent-colored halo
+        // Selected connectors get accent colored border (from theme)
         if (isSelected(MenuContextType::Connector, conn.connectorID)) {
             uint32_t accentColorIm = ThemeUtils::toImColor(localBoard.theme.accentColor);
             draw_list->AddLine(srcCenter, tgtCenter, accentColorIm, (conn.thickness + 4.0f) * camera.zoom);
@@ -492,19 +509,139 @@ void ClientRenderer::drawCards(ImDrawList* draw_list, BoardState& localBoard, Im
 
         draw_list->AddRectFilled(cardMin, cardMax, bgCol, 6.0f);
         draw_list->AddRect(cardMin, cardMax, borderCol, 6.0f, 0, borderThickness);
-        draw_list->AddText(ImVec2(cardMin.x + 10, cardMin.y + 10), textCol, card.text.c_str());
+
+        // Scale font size by camera zoom
+        float fontSize = ImGui::GetFontSize() * camera.zoom;
+        float textPadding = 10.0f * camera.zoom;
+
+        // Wrap the text to the card's inner width so it never spills horizontally
+        float wrapWidth = cardMax.x - (cardMin.x + textPadding) - textPadding;
+
+        // Backup clip text in case wrap fails
+        draw_list->PushClipRect(cardMin, cardMax, true);
+        draw_list->AddText(ImGui::GetFont(), fontSize, ImVec2(cardMin.x + textPadding, cardMin.y + textPadding), textCol, card.text.c_str(), NULL, wrapWidth);
+        draw_list->PopClipRect();
     }
 }
 
-// Hook for the selection sidebar. When implemented this renders a side panel that
-// exposes editor options for whichever object is currently selected.
+// Opens selection sidebar for object selected on right side of the screen
 void ClientRenderer::drawSelectionSidebar(BoardState& localBoard) {
-    // No object selected means there is nothing to edit yet
-    if (selection.type == MenuContextType::Background) {
+    // Return if an object was not selected 
+    if (!selectionSidebarOpen || selection.type == MenuContextType::Background) {
         return;
     }
-    
-    (void)localBoard;
+
+    // Set panel to right side of screen
+    const float sidebarWidth = 320.0f;
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(displaySize.x - sidebarWidth, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displaySize.y), ImGuiCond_Always);
+
+    if (ImGui::Begin(getSelectionTitle(selection.type), &selectionSidebarOpen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+        ImGui::PushID(static_cast<int>(selection.targetID));
+
+        // Per-selected object method so we can scale if we need/want to
+        switch (selection.type) {
+            case MenuContextType::Card:
+                drawCardOptions(localBoard);
+                break;
+            case MenuContextType::Connector:
+                drawConnectorOptions(localBoard);
+                break;
+            default:
+                break;
+        }
+
+        ImGui::PopID();
+    }
+    ImGui::End();
+}
+
+// Title shown on the sidebar window for a given object type.
+const char* ClientRenderer::getSelectionTitle(MenuContextType type) const {
+    switch (type) {
+        case MenuContextType::Card:      return "Card";
+        case MenuContextType::Connector: return "Connector";
+        default:                         return "Selection";
+    }
+}
+
+// Card editor options
+void ClientRenderer::drawCardOptions(BoardState& localBoard) {
+    auto cardIt = localBoard.cards.find(selection.targetID);
+    if (cardIt == localBoard.cards.end()) {
+        return;
+    }
+    Card& card = cardIt->second;
+
+    // Text content editor
+    ImGui::TextUnformatted("Text:");
+    char textBuffer[4096];
+    snprintf(textBuffer, sizeof(textBuffer), "%s", card.text.c_str());
+    ImVec2 textSize(ImGui::GetContentRegionAvail().x, 100.0f);
+    if (ImGui::InputTextMultiline("##text", textBuffer, sizeof(textBuffer), textSize, ImGuiInputTextFlags_WordWrap)) {
+        card.text = textBuffer;
+    }
+
+    // Need color editor
+}
+
+// Connector editor options
+void ClientRenderer::drawConnectorOptions(BoardState& localBoard) {
+    auto connIt = localBoard.connectors.find(selection.targetID);
+    if (connIt == localBoard.connectors.end()) {
+        return;
+    }
+    Connector& connector = connIt->second;
+
+    // Thickness editor with a reset-to-default button
+    ImGui::TextUnformatted("Thickness:");
+    float resetButtonWidth = ImGui::CalcTextSize("R").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - resetButtonWidth - ImGui::GetStyle().ItemSpacing.x);
+    ImGui::InputFloat("##thickness", &connector.thickness, 1.0f, 1.0f, "%.2f");
+
+    // Keep thickness positive once editing finishes so the connector stays valid
+    if (!ImGui::IsItemActive() && connector.thickness < 0.1f) {
+        connector.thickness = 0.1f;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("R")) {
+        connector.thickness = localBoard.user_settings.defaultConnectorThickness;
+    }
+}
+
+// Force theme colors on ImGUI elements
+void ClientRenderer::applyTheme(const BoardTheme& theme) {
+    ImGuiStyle& style = ImGui::GetStyle();
+
+    auto toVec4 = [](const Color& c) {
+        return ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f);
+    };
+
+    const ImVec4 base = toVec4(theme.cardColor);
+    const ImVec4 hovered = toVec4(ThemeUtils::shift(theme.cardColor, 20, 20, 20));
+    const ImVec4 active = toVec4(ThemeUtils::shift(theme.cardColor, -20, -20, -20));
+    const ImVec4 text = toVec4(ThemeUtils::getTextColor(theme.cardColor));
+
+    // Labels & text elements
+    style.Colors[ImGuiCol_Text] = text;
+    // Input fields
+    style.Colors[ImGuiCol_FrameBg] = base;
+    style.Colors[ImGuiCol_FrameBgHovered] = hovered;
+    style.Colors[ImGuiCol_FrameBgActive] = active;
+    // Buttons
+    style.Colors[ImGuiCol_Button] = base;
+    style.Colors[ImGuiCol_ButtonHovered] = hovered;
+    style.Colors[ImGuiCol_ButtonActive] = active;
+    // Sliders & checkmarks
+    style.Colors[ImGuiCol_SliderGrab] = hovered;
+    style.Colors[ImGuiCol_SliderGrabActive] = active;
+    style.Colors[ImGuiCol_CheckMark] = text;
+    // Window title bars
+    style.Colors[ImGuiCol_TitleBg] = base;
+    style.Colors[ImGuiCol_TitleBgActive] = hovered;
+    style.Colors[ImGuiCol_TitleBgCollapsed] = base;
 }
 
 // Shutdown method (run this on closing renderer/app)

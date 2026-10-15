@@ -8,3 +8,5 @@ OpenNoteServer.o
 *.o
 imgui/*.o
 imgui/backends/*.o
+
+settings.json
