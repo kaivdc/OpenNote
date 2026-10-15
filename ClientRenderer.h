@@ -58,6 +58,7 @@ public:
 private:
     void handleInput(BoardState& localBoard, ImVec2 boardCenter, bool hovered);
     void handleContextMenu(BoardState& localBoard, ImVec2 boardCenter, const ContextMenuTarget& context);
+    void changeBackgroundColor();
 
     // Coordinate conversion between world space and screen space
     ImVec2 worldToScreen(float worldX, float worldY, ImVec2 boardCenter) const;
@@ -81,6 +82,7 @@ private:
     void handleCameraControls(bool hovered);
     void handleObjectSelection(uint32_t hoveredCardID, uint32_t hoveredConnectorID, bool backgroundHovered);
     void handleConnectingMode(BoardState& localBoard, uint32_t hoveredCardID);
+    void handleKeyboardShortcuts(BoardState& localBoard);
 
     void drawGrid(ImDrawList* draw_list, BoardState& localBoard, ImVec2 board_p0, ImVec2 board_p1, ImVec2 boardCenter);
     void drawConnectors(ImDrawList* draw_list, BoardState& localBoard, ImVec2 boardCenter);

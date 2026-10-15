@@ -205,6 +205,9 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, boo
     // Process context menu logic
     handleContextMenu(localBoard, boardCenter, currentMenuTarget);
 
+    // Keyboard shortcut handler 
+    handleKeyboardShortcuts(localBoard);
+
     // Clear a selection that points at an object which no longer exists
     syncSelection(localBoard);
 
@@ -527,6 +530,22 @@ void ClientRenderer::handleConnectingMode(BoardState& localBoard, uint32_t hover
     }
 }
 
+// Deletes whichever object is currently selected when the Delete key is pressed
+void ClientRenderer::handleKeyboardShortcuts(BoardState& localBoard) {
+    // Skip shortcuts while a text field has keyboard focus
+    if (ImGui::GetIO().WantTextInput) {
+        return;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        if (selection.type == MenuContextType::Card) {
+            localBoard.deleteCard(selection.targetID);
+        } else if (selection.type == MenuContextType::Connector) {
+            localBoard.deleteConnector(selection.targetID);
+        }
+    }
+}
+
 bool ClientRenderer::isSelected(MenuContextType type, uint32_t id) const {
     return selection.type == type && selection.targetID == id;
 }
@@ -549,6 +568,10 @@ void ClientRenderer::handleContextMenu(BoardState& localBoard, ImVec2 boardCente
                 float spawnX = contextMenuWorldPos.x;
                 float spawnY = contextMenuWorldPos.y;
                 localBoard.createCardAt(spawnX, spawnY, "Enter text...");
+            }
+
+            if (ImGui::MenuItem("Change Background Color...")) {
+                changeBackgroundColor();
             }
         }
         
@@ -578,6 +601,10 @@ void ClientRenderer::handleContextMenu(BoardState& localBoard, ImVec2 boardCente
 
         ImGui::EndPopup();
     }
+}
+
+// Opens the background color editor for the board
+void ClientRenderer::changeBackgroundColor() {
 }
 
 ImVec2 ClientRenderer::worldToScreen(float worldX, float worldY, ImVec2 boardCenter) const {
