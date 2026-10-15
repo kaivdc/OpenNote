@@ -3,9 +3,16 @@
 # Clean previous builds
 make clean
 
-# Build the project and check for errors
+# Determine the number of CPU cores across mac/Linux/WSL
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    NUM_CORES=$(sysctl -n hw.ncpu)
+else
+    NUM_CORES=$(nproc)
+fi
+
+# Build the project using all available cores
 echo "[Launcher] : Building project..."
-if ! make -j$(nproc); then
+if ! make -j"$NUM_CORES"; then
     echo "[ERROR] : Build failed. Aborting launch."
     exit 1
 fi
