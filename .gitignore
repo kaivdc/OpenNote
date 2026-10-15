@@ -10,3 +10,7 @@ imgui/*.o
 imgui/backends/*.o
 
 settings.json
+
+# Runtime content-addressed media store (keep the folder itself)
+assets/*
+!assets/.gitkeep

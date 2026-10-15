@@ -1,7 +1,7 @@
 CXX = g++
-CXXFLAGS = -g -std=c++20 -pthread -Wall -Wextra -Iimgui -Iimgui/backends
-LDFLAGS = -pthread
-CLIENT_LDFLAGS = -pthread -lGLEW -lglfw -lGL -ldl
+CXXFLAGS = -g -std=c++20 -pthread -Wall -Wextra -Iimgui -Iimgui/backends -Ithird_party
+LDFLAGS = -pthread -lcrypto
+CLIENT_LDFLAGS = -pthread -lGLEW -lglfw -lGL -ldl -lcrypto
 
 # ImGui source files
 IMGUI_SRCS = imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_tables.cpp imgui/imgui_widgets.cpp \
