@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <iostream>
+#include "ClientSettings.h"
 
 using namespace std;
 
@@ -159,6 +160,7 @@ struct BoardState {
     unordered_map<uint32_t, Connector> connectors;
     vector<int> connectedClients;
     BoardTheme theme;
+    Settings user_settings;
 
     uint32_t nextCardID = 1;
     uint32_t nextConnectorID = 1;
@@ -179,16 +181,31 @@ struct BoardState {
         return sourceExists && targetExists;
     }
 
+    // Helper method checking whether a connector already links the two given cards (in either direction).
+    bool connectorExistsBetween(uint32_t sourceCardID, uint32_t targetCardID) const {
+        for (const auto& [id, connector] : connectors) {
+            bool forward = connector.sourceCardID == sourceCardID && connector.targetCardID == targetCardID;
+            bool backward = connector.sourceCardID == targetCardID && connector.targetCardID == sourceCardID;
+            if (forward || backward) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Factory method returning pointer to connector + adding it to board state.
-    Card* createCardAt(float x, float y, const string& text = "New Card", std::optional<Color> color = std::nullopt, float width = 100.0f, float height = 100.0f) {
+    Card* createCardAt(float x, float y, const string& text = "New Card", std::optional<Color> color = std::nullopt, float width = 0.0f, float height = 0.0f) {
         uint32_t assignedID = nextCardID;
+
+        float finalWidth = (width > 0.0f) ? width : user_settings.defaultCardWidth;
+        float finalHeight = (height > 0.0f) ? height : user_settings.defaultCardHeight;
 
         Card card;
         card.cardID = assignedID;
-        card.width = width;
-        card.height = height;
-        card.x = x - (width / 2.0f);
-        card.y = y - (height / 2.0f);
+        card.width = finalWidth;
+        card.height = finalHeight;
+        card.x = x - (finalWidth / 2.0f);
+        card.y = y - (finalHeight / 2.0f);
         card.zIndex = 1;
         card.text = text;
         
@@ -206,9 +223,15 @@ struct BoardState {
     }
 
     // Factory method returning pointer to connector for success/fail + adding to boardstate.
-    Connector* createConnector(uint32_t sourceCardID, uint32_t targetCardID, float thickness = 10.0f, std::optional<Color> color = std::nullopt) {
+    Connector* createConnector(uint32_t sourceCardID, uint32_t targetCardID, float thickness = 0.0f, std::optional<Color> color = std::nullopt) {
         if (cards.find(sourceCardID) == cards.end() || cards.find(targetCardID) == cards.end()) {
             cerr << "[ERROR] : Connector creation failed, sourceCardID or targetCardID does not exist.\n";
+            return nullptr;
+        }
+
+        // Reject duplicate connectors between the same pair of cards
+        if (connectorExistsBetween(sourceCardID, targetCardID)) {
+            cerr << "[ERROR] : Connector creation failed, a connector between these cards already exists.\n";
             return nullptr;
         }
         
@@ -218,7 +241,7 @@ struct BoardState {
         connector.connectorID = assignedID;
         connector.sourceCardID = sourceCardID;
         connector.targetCardID = targetCardID;
-        connector.thickness = thickness;
+        connector.thickness = (thickness > 0.0f) ? thickness : user_settings.defaultConnectorThickness;
 
         connector.color = color.value_or(theme.connectorColor);
 
