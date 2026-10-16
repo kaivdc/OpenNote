@@ -18,6 +18,7 @@
 
 using namespace std;
 using buffer = vector<uint8_t>;
+using json = nlohmann::json;
 
 #define SERVER_PORT 5432
 #define MAX_LINE 256
@@ -26,68 +27,6 @@ using buffer = vector<uint8_t>;
 constexpr size_t HEADER_SIZE = 5; // 5 byte header: 1-byte msgType, 4-byte payloadLength
 constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB max payload
 
-
-
-/*
-      TEMPORARY PLACEMENT OF APPEND FUNCTIONS
-      WILL MOVE TO HEADER LATER
-*/
-void appendUint8(buffer& buf, uint8_t value)
-{
-  buf.push_back(value);
-}
-
-void appendUint32(buffer& buf, uint32_t value)
-{
-  uint32_t networkValue = htonl(value);
-  const auto* bytes = reinterpret_cast<const uint8_t*>(&networkValue);
-  buf.insert(buf.end(), bytes, bytes + sizeof(networkValue));
-}
-
-void appendString(buffer& buf, const string& str)
-{
-  appendUint32(buf, static_cast<uint32_t>(str.size()));
-  buf.insert(buf.end(), str.begin(), str.end());
-}
-
-buffer createPacket(OpCode opcode, const buffer& payload)
-{
-  buffer packet;
-  packet.reserve(HEADER_SIZE + payload.size());
-  //Byte 0: OpCode
-  appendUint8(packet, static_cast<uint8_t>(opcode));
-  //Bytes 1-4: Payload Length
-  appendUint32(packet, static_cast<uint32_t>(payload.size()));
-  //Payload
-  packet.insert(packet.end(), payload.begin(), payload.end());
-  return packet;
-}
-
-buffer heartBeatPacket()
-{
-  buffer payload;
-  return createPacket(OpCode::HEARTBEAT, payload);
-}
-
-buffer AuthRequestPacket(string version, const uint32_t boardID, const string authToken)
-{
-  buffer payload;
-  appendString(payload, version);
-  appendUint32(payload, boardID);
-  appendString(payload, authToken);
-  return createPacket(OpCode::AUTH_REQ, payload);
-}
-
-buffer moveCardPacket(uint32_t cardID, float x, float y, float width, float height)
-{
-  buffer payload;
-    appendUint32(payload, cardID);
-    appendUint32(payload, static_cast<uint32_t>(x));
-    appendUint32(payload, static_cast<uint32_t>(y));
-    appendUint32(payload, static_cast<uint32_t>(width));
-    appendUint32(payload, static_cast<uint32_t>(height));
-    return payload;
-}
 
 int main(int argc, char *argv[])
 {
