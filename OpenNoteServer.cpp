@@ -428,6 +428,7 @@ bool handleCreateCard(int clientSocket, const string& payloadStr, BoardState*& o
         }
 
         board->cards[newCard.cardID] = newCard;
+        board->bringCardToFront(newCard.cardID);
 
         std::cout << "[SERVER] : Created card ID " << newCard.cardID << "in Board" << board->boardID << " by client " << clientSocket << "\n";
     } catch (const nlohmann::json::parse_error& e) {
@@ -505,30 +506,47 @@ bool handleEditCard(int clientSocket, const string& payloadStr, BoardState*& out
             return false;
         }
         Card& card = cardIt->second;
+        bool wasEdited = false;
 
         if (jsonParsed.contains("x")) {
             card.x = jsonParsed["x"];
+            wasEdited = true;
         }
         if (jsonParsed.contains("y")) {
             card.y = jsonParsed["y"];
+            wasEdited = true;
         }
         if (jsonParsed.contains("width")) {
             float newWidth = jsonParsed["width"];
-            if (newWidth >= 0.0f && newWidth <= 1000.0f) card.width = newWidth;
+            if (newWidth >= 0.0f && newWidth <= 1000.0f) {
+                card.width = newWidth;
+                wasEdited = true;
+            }
         }
         if (jsonParsed.contains("height")) {
             float newHeight = jsonParsed["height"];
-            if (newHeight >= 0.0f && newHeight <= 1000.0f) card.height = newHeight;
+            if (newHeight >= 0.0f && newHeight <= 1000.0f) {
+                card.height = newHeight;
+                wasEdited = true;
+            }
         }
         if (jsonParsed.contains("text")) {
             string newText = jsonParsed["text"];
-            if (newText.length() <= 4096) card.text = newText;
+            if (newText.length() <= 4096) {
+                card.text = newText;
+                wasEdited = true;
+            }
         }
         if (jsonParsed.contains("zIndex")) {
             card.zIndex = jsonParsed["zIndex"];
+            wasEdited = true;
         }
         if (jsonParsed.contains("mediaURL")) {
             card.mediaURL = jsonParsed["mediaURL"];
+            wasEdited = true;
+        }
+        if (wasEdited) {
+            outBoard->bringCardToFront(cardID);
         }
 
         std::cout << "[SERVER] : Updated card " << cardID << "on Board" << outBoard->boardID << " by client " << clientSocket << "\n";

@@ -4,18 +4,55 @@
 #include "backends/imgui_impl_opengl3.h"
 #include <iostream>
 #include "BoardStructs.h"
+#include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 using namespace std;
-
-static Camera boardCamera;
 
 // Card resize tuning (world units for sizes, screen pixels for handle grab zones)
 static constexpr float kMinCardSize = 20.0f;
 static constexpr float kMaxCardSize = 1000.0f;
 static constexpr float kResizeHandleSize = 10.0f;
 static constexpr float kResizeSideHandleLength = kResizeHandleSize * 4.0f;
+static constexpr float kSelectionDragThreshold = 4.0f;
+
+// Converts between the board's byte Color and ImGui's 0..1 float color
+static ImVec4 toImVec4(const Color& c) {
+    return ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f);
+}
+
+static bool rectanglesOverlap(ImVec2 aMin, ImVec2 aMax, ImVec2 bMin, ImVec2 bMax) {
+    return aMin.x <= bMax.x && aMax.x >= bMin.x &&
+           aMin.y <= bMax.y && aMax.y >= bMin.y;
+}
+
+static bool segmentIntersectsRectangle(ImVec2 a, ImVec2 b, ImVec2 rectMin, ImVec2 rectMax) {
+    float tMin = 0.0f;
+    float tMax = 1.0f;
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+
+    auto clip = [&](float p, float q) {
+        if (fabsf(p) < 1e-6f) {
+            return q >= 0.0f;
+        }
+
+        float t = q / p;
+        if (p < 0.0f) {
+            if (t > tMax) return false;
+            if (t > tMin) tMin = t;
+        } else {
+            if (t < tMin) return false;
+            if (t < tMax) tMax = t;
+        }
+        return true;
+    };
+
+    return clip(-dx, a.x - rectMin.x) &&
+           clip(dx, rectMax.x - a.x) &&
+           clip(-dy, a.y - rectMin.y) &&
+           clip(dy, rectMax.y - a.y);
+}
 
 GLFWwindow* ClientRenderer::initialize(int width, int height, const char* title) {
     if (!glfwInit()) {
@@ -36,11 +73,13 @@ GLFWwindow* ClientRenderer::initialize(int width, int height, const char* title)
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+    glfwSetWindowUserPointer(window, this);
+    glfwSetDropCallback(window, &ClientRenderer::onFilesDropped);
 
-    glewExperimental = GL_TRUE; 
+    glewExperimental = GL_TRUE;
     GLenum err = glewInit();
     if (err != GLEW_OK) {
-        std::cerr << "[WARNING] GLEW init returned: " << glewGetErrorString(err) 
+        std::cerr << "[WARNING] GLEW init returned: " << glewGetErrorString(err)
                   << " (Code: " << err << "). Continuing anyway for WSLg...\n";
     }
 
@@ -54,10 +93,12 @@ GLFWwindow* ClientRenderer::initialize(int width, int height, const char* title)
 
     ImGui::StyleColorsDark();
 
+    imageCache.initializeUploadIcon("resources/icons/upload_icon.png");
+
     return window;
 }
 
-void ClientRenderer::updateAndRender(BoardState& localBoard) {
+void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandler& commandHandler) {
     glfwPollEvents();
 
     ImGui_ImplOpenGL3_NewFrame();
@@ -65,18 +106,18 @@ void ClientRenderer::updateAndRender(BoardState& localBoard) {
     ImGui::NewFrame();
 
     // Apply the board theme to the ImGui elements
-    applyTheme(localBoard.theme);
+    inspector.applyTheme(inspector.displayTheme(board));
 
     // Board window set to display size
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    
-    ImGuiWindowFlags window_flags = 
-        ImGuiWindowFlags_NoTitleBar |                     
-        ImGuiWindowFlags_NoCollapse | 
-        ImGuiWindowFlags_NoResize |             
-        ImGuiWindowFlags_NoMove | 
-        ImGuiWindowFlags_NoBringToFrontOnFocus |         
+
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoNavFocus |
         ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoScrollWithMouse;
@@ -85,8 +126,8 @@ void ClientRenderer::updateAndRender(BoardState& localBoard) {
 
     // Info bar
     if (ImGui::BeginChild("Toolbar", ImVec2(0, 45), true)) {
-        ImGui::Text("Board ID: %u | Cards: %zu | Connectors: %zu | Zoom: %.2fx", 
-                    localBoard.boardID, localBoard.cards.size(), localBoard.connectors.size(), camera.zoom);
+        ImGui::Text("Board ID: %u | Cards: %zu | Connectors: %zu | Zoom: %.2fx",
+                    board.boardID, board.cards.size(), board.connectors.size(), camera.zoom);
         ImGui::SameLine();
 
         if (ImGui::Button("Reset View")) {
@@ -104,31 +145,59 @@ void ClientRenderer::updateAndRender(BoardState& localBoard) {
 
     // Allow the per-card hitboxes submitted later to overlap and take priority over this full-board hitbox
     ImGui::SetNextItemAllowOverlap();
-    ImGui::InvisibleButton("board", board_sz, 
+    ImGui::InvisibleButton("board", board_sz,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool isHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
 
+    // Theme color picker. Drawn before input so a request made this frame opens
+    // on the next frame (avoids the click that requested it instantly closing it).
+    inspector.drawColorPicker(board, commandHandler);
+
     // Update
-    handleInput(localBoard, boardCenter, isHovered);
+    handleInput(board, commandHandler, boardCenter, isHovered);
+    processDroppedFiles(board, commandHandler);
+    imageCache.loadForBoard(board);
+    if (dropPreviewCardID != 0) {
+        auto previewCard = board.cards.find(dropPreviewCardID);
+        const ClientImageCache::Image* image = previewCard == board.cards.end()
+            ? nullptr
+            : imageCache.find(previewCard->second.mediaURL);
+        if (!image || (!image->loading && (image->texture != 0 || image->failed))) {
+            dropPreviewCardID = 0;
+        }
+    }
 
     // Render
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     draw_list->PushClipRect(board_p0, board_p1, true);
 
     // Background
-    uint32_t bgColIm = ThemeUtils::toImColor(localBoard.theme.boardBackgroundColor);
+    uint32_t bgColIm = ThemeUtils::toImColor(inspector.displayTheme(board).boardBackgroundColor);
     draw_list->AddRectFilled(board_p0, board_p1, bgColIm);
 
-    drawGrid(draw_list, localBoard, board_p0, board_p1, boardCenter);
-    drawConnectors(draw_list, localBoard, boardCenter);
-    drawConnectionPreview(draw_list, localBoard, boardCenter);
-    drawCards(draw_list, localBoard, boardCenter);
+    drawGrid(draw_list, board, board_p0, board_p1, boardCenter);
+    drawConnectors(draw_list, board, boardCenter);
+    drawConnectionPreview(draw_list, board, boardCenter);
+    drawCards(draw_list, board, boardCenter);
+
+    if (isSelectionSelecting && selectionHasMoved) {
+        const ImVec2 rectMin(
+            (selectionStart.x < selectionEnd.x) ? selectionStart.x : selectionEnd.x,
+            (selectionStart.y < selectionEnd.y) ? selectionStart.y : selectionEnd.y);
+        const ImVec2 rectMax(
+            (selectionStart.x > selectionEnd.x) ? selectionStart.x : selectionEnd.x,
+            (selectionStart.y > selectionEnd.y) ? selectionStart.y : selectionEnd.y);
+        ImVec4 fillColor = toImVec4(inspector.displayTheme(board).accentColor);
+        fillColor.w = 0.16f;
+        draw_list->AddRectFilled(rectMin, rectMax, ImGui::ColorConvertFloat4ToU32(fillColor));
+        draw_list->AddRect(rectMin, rectMax, ThemeUtils::toImColor(inspector.displayTheme(board).accentColor), 0.0f, 0, 1.5f);
+    }
 
     draw_list->PopClipRect();
     ImGui::End();
 
     // Selection sidebar hook (per-object editing options)
-    drawSelectionSidebar(localBoard);
+    inspector.drawSidebar(board, imageCache, commandHandler, selection, selectionSidebarOpen);
 
     // Render to screen
     ImGui::Render();
@@ -137,30 +206,94 @@ void ClientRenderer::updateAndRender(BoardState& localBoard) {
     glViewport(0, 0, display_w, display_h);
     glClearColor(0.12f, 0.12f, 0.14f, 1.00f);
     glClear(GL_COLOR_BUFFER_BIT);
-    
+
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(window);
 }
 
-void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, bool hovered) {
+void ClientRenderer::onFilesDropped(GLFWwindow* droppedWindow, int pathCount, const char* paths[]) {
+    auto* renderer = static_cast<ClientRenderer*>(glfwGetWindowUserPointer(droppedWindow));
+    if (!renderer) {
+        return;
+    }
+    for (int i = 0; i < pathCount; ++i) {
+        if (paths[i]) {
+            renderer->droppedPaths.emplace_back(paths[i]);
+        }
+    }
+}
+
+void ClientRenderer::processDroppedFiles(const BoardState& board, BoardCommandHandler& commandHandler) {
+    if (droppedPaths.empty()) return;
+
+    std::vector<std::string> paths;
+    paths.swap(droppedPaths);
+    dropPreviewCardID = 0;
+
+    auto cardIt = board.cards.find(hoveredCardID);
+    if (hoveredCardID == 0 || cardIt == board.cards.end()) {
+        cerr << "[WARNING] Drop an image onto a card to attach it.\n";
+        return;
+    }
+
+    for (const std::string& droppedPath : paths) {
+        std::string error;
+        const std::string imageSource = ClientImageCache::sourceFromDrop(droppedPath, error);
+        if (imageSource.empty()) {
+            cerr << "[WARNING] Could not attach '" << droppedPath << "': " << error << "\n";
+            continue;
+        }
+
+        commandHandler.handle(SetCardImageCommand{cardIt->second.cardID, imageSource});
+        dropPreviewCardID = cardIt->second.cardID;
+        inspector.resetImageSourceEditor();
+        return;
+    }
+}
+
+void ClientRenderer::drawImageTexture(ImDrawList* drawList, GLuint texture, ImVec2 min, ImVec2 max) const {
+    if (texture != 0) {
+        drawList->AddImage(static_cast<ImTextureID>(texture), min, max);
+    }
+}
+
+void ClientRenderer::handleInput(const BoardState& board, BoardCommandHandler& commandHandler, ImVec2 boardCenter, bool hovered) {
     // Camera panning + zoom
     handleCameraControls(hovered);
 
     // Remember if a resize was in progress so releasing outside the card keeps the selection
     bool wasResizing = (resizingCardID != 0);
 
-    // Reset card dragging / resizing state once the left button is released
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    // Commit a geometry change once on release. The renderer keeps the preview
+    // local during the gesture, so a future command sink can send one update.
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && geometryPreviewCardID != 0) {
+        if (resizingCardID != 0) {
+            geometryPreview = applyCardResize(geometryPreview, ImGui::GetIO().MouseDelta);
+        } else if (draggedCardID != 0) {
+            geometryPreview.x += ImGui::GetIO().MouseDelta.x / camera.zoom;
+            geometryPreview.y += ImGui::GetIO().MouseDelta.y / camera.zoom;
+        }
+
+        if (board.cards.find(geometryPreviewCardID) != board.cards.end()) {
+            commandHandler.handle(SetCardGeometryCommand{
+                geometryPreviewCardID,
+                geometryPreview.x,
+                geometryPreview.y,
+                geometryPreview.width,
+                geometryPreview.height});
+        }
         draggedCardID = 0;
         resizingCardID = 0;
+        geometryPreviewCardID = 0;
         activeResizeHandle = ResizeHandle::None;
     }
 
-    uint32_t hoveredCardID = submitCardHitboxes(localBoard, boardCenter);
+    uint32_t hoveredCardID = submitCardHitboxes(board, commandHandler, boardCenter);
+    this->hoveredCardID = hoveredCardID;
 
     uint32_t hoveredConnectorID = 0;
     if (hoveredCardID == 0) {
-        hoveredConnectorID = hitTestConnector(localBoard, ImGui::GetIO().MousePos, boardCenter);
+        hoveredConnectorID = hitTestConnector(board, ImGui::GetIO().MousePos, boardCenter);
     }
 
     // Empty board space is only "background" when no object sits under the cursor
@@ -168,14 +301,15 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, boo
 
     // Update the current selection (panning + zooming never clear it)
     handleObjectSelection(hoveredCardID, hoveredConnectorID, backgroundHovered && !wasResizing);
+    updateSelectionSelection(board, boardCenter, backgroundHovered && !wasResizing);
 
     // Double clicking an object opens its editing sidebar for that object
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         if (hoveredCardID != 0) {
-            selection = { MenuContextType::Card, hoveredCardID };
+            setSelection({ MenuContextType::Card, hoveredCardID });
             selectionSidebarOpen = true;
         } else if (hoveredConnectorID != 0) {
-            selection = { MenuContextType::Connector, hoveredConnectorID };
+            setSelection({ MenuContextType::Connector, hoveredConnectorID });
             selectionSidebarOpen = true;
         }
     }
@@ -187,9 +321,13 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, boo
 
         // Set context based on what was hit
         if (hoveredCardID != 0) {
-            currentMenuTarget = { MenuContextType::Card, hoveredCardID };
+            currentMenuTarget = selectedObjects.size() > 1 && isSelected(MenuContextType::Card, hoveredCardID)
+                ? ContextMenuTarget{ MenuContextType::MultipleSelection, 0 }
+                : ContextMenuTarget{ MenuContextType::Card, hoveredCardID };
         } else if (hoveredConnectorID != 0) {
-            currentMenuTarget = { MenuContextType::Connector, hoveredConnectorID };
+            currentMenuTarget = selectedObjects.size() > 1 && isSelected(MenuContextType::Connector, hoveredConnectorID)
+                ? ContextMenuTarget{ MenuContextType::MultipleSelection, 0 }
+                : ContextMenuTarget{ MenuContextType::Connector, hoveredConnectorID };
         } else {
             currentMenuTarget = { MenuContextType::Background, 0 };
         }
@@ -203,16 +341,16 @@ void ClientRenderer::handleInput(BoardState& localBoard, ImVec2 boardCenter, boo
     }
 
     // Process context menu logic
-    handleContextMenu(localBoard, boardCenter, currentMenuTarget);
+    handleContextMenu(commandHandler, currentMenuTarget);
 
-    // Keyboard shortcut handler 
-    handleKeyboardShortcuts(localBoard);
+    // Keyboard shortcut handler
+    handleKeyboardShortcuts(commandHandler);
 
     // Clear a selection that points at an object which no longer exists
-    syncSelection(localBoard);
+    syncSelection(board);
 
     // Connection (link drawing) mode
-    handleConnectingMode(localBoard, hoveredCardID);
+    handleConnectingMode(board, commandHandler, hoveredCardID);
 }
 
 void ClientRenderer::handleCameraControls(bool hovered) {
@@ -243,30 +381,43 @@ void ClientRenderer::handleCameraControls(bool hovered) {
     }
 }
 
-uint32_t ClientRenderer::submitCardHitboxes(BoardState& localBoard, ImVec2 boardCenter) {
+uint32_t ClientRenderer::submitCardHitboxes(const BoardState& board, BoardCommandHandler& commandHandler, ImVec2 boardCenter) {
     uint32_t hoveredCardID = 0;
 
     // A click on a resize handle of the selected card starts a resize, even on the part outside the card
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && selection.type == MenuContextType::Card) {
-        auto it = localBoard.cards.find(selection.targetID);
-        if (it != localBoard.cards.end()) {
-            ResizeHandle handle = hitTestResizeHandle(it->second, ImGui::GetIO().MousePos, boardCenter);
+        auto it = board.cards.find(selection.targetID);
+        if (it != board.cards.end()) {
+            CardGeometry geometry = geometryForCard(it->second);
+            ResizeHandle handle = hitTestResizeHandle(geometry, ImGui::GetIO().MousePos, boardCenter);
             if (handle != ResizeHandle::None) {
                 resizingCardID = selection.targetID;
                 activeResizeHandle = handle;
+                geometryPreviewCardID = resizingCardID;
+                geometryPreview = geometry;
+                commandHandler.handle(BringCardToFrontCommand{resizingCardID});
             }
         }
     }
 
-    for (auto& [id, card] : localBoard.cards) {
-        ImVec2 screenPos = worldToScreen(card.x, card.y, boardCenter);
-        ImVec2 screenSize(card.width * camera.zoom, card.height * camera.zoom);
+    for (uint32_t cardID : board.getCardIDsInZOrder()) {
+        auto cardIt = board.cards.find(cardID);
+        if (cardIt == board.cards.end()) {
+            continue;
+        }
+        const Card& card = cardIt->second;
+        const CardGeometry geometry = geometryForCard(card);
+        ImVec2 screenPos = worldToScreen(geometry.x, geometry.y, boardCenter);
+        ImVec2 screenSize(geometry.width * camera.zoom, geometry.height * camera.zoom);
         if (screenSize.x <= 0.0f || screenSize.y <= 0.0f) {
             continue;
         }
 
         ImGui::PushID(static_cast<int>(card.cardID));
         ImGui::SetCursorScreenPos(screenPos);
+        // Hitboxes are submitted back-to-front; allow each later (higher-z) card
+        // to take hover and click priority over the cards underneath it.
+        ImGui::SetNextItemAllowOverlap();
         ImGui::InvisibleButton("##cardHitbox", screenSize, ImGuiButtonFlags_MouseButtonLeft);
 
         if (ImGui::IsItemHovered()) {
@@ -274,40 +425,43 @@ uint32_t ClientRenderer::submitCardHitboxes(BoardState& localBoard, ImVec2 board
         }
 
         // A left click on a card grabs it for dragging (only one card at a time)
-        if (ImGui::IsItemActive()) {
+        if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             if (draggedCardID == 0 && resizingCardID == 0) {
                 draggedCardID = card.cardID;
+                geometryPreviewCardID = draggedCardID;
+                geometryPreview = geometry;
+                commandHandler.handle(BringCardToFrontCommand{draggedCardID});
             }
-            selection = { MenuContextType::Card, card.cardID };
+            setSelection({ MenuContextType::Card, card.cardID });
         }
         ImGui::PopID();
     }
 
     // Resize the grabbed card, anchoring the opposite edge
-    if (resizingCardID != 0) {
-        auto it = localBoard.cards.find(resizingCardID);
-        if (it != localBoard.cards.end()) {
-            applyCardResize(it->second);
-        }
-    }
-
-    // Move the grabbed card by the mouse delta
-    if (draggedCardID != 0) {
-        auto it = localBoard.cards.find(draggedCardID);
-        if (it != localBoard.cards.end()) {
-            ImVec2 delta = ImGui::GetIO().MouseDelta;
-            it->second.x += delta.x / camera.zoom;
-            it->second.y += delta.y / camera.zoom;
+    if (geometryPreviewCardID != 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (resizingCardID != 0) {
+            geometryPreview = applyCardResize(geometryPreview, ImGui::GetIO().MouseDelta);
+        } else if (draggedCardID != 0) {
+            const ImVec2 delta = ImGui::GetIO().MouseDelta;
+            geometryPreview.x += delta.x / camera.zoom;
+            geometryPreview.y += delta.y / camera.zoom;
         }
     }
 
     return hoveredCardID;
 }
 
+ClientRenderer::CardGeometry ClientRenderer::geometryForCard(const Card& card) const {
+    if (geometryPreviewCardID == card.cardID) {
+        return geometryPreview;
+    }
+    return {card.x, card.y, card.width, card.height};
+}
+
 // Finds which resize handle (if any) sits under the mouse for a given card (screen scale adjusted)
-ResizeHandle ClientRenderer::hitTestResizeHandle(const Card& card, ImVec2 mousePos, ImVec2 boardCenter) const {
-    ImVec2 p0 = worldToScreen(card.x, card.y, boardCenter);
-    ImVec2 p1 = worldToScreen(card.x + card.width, card.y + card.height, boardCenter);
+ResizeHandle ClientRenderer::hitTestResizeHandle(const CardGeometry& geometry, ImVec2 mousePos, ImVec2 boardCenter) const {
+    ImVec2 p0 = worldToScreen(geometry.x, geometry.y, boardCenter);
+    ImVec2 p1 = worldToScreen(geometry.x + geometry.width, geometry.y + geometry.height, boardCenter);
 
     float half = kResizeHandleSize * 0.5f;
     float left = p0.x, top = p0.y;
@@ -325,9 +479,9 @@ ResizeHandle ClientRenderer::hitTestResizeHandle(const Card& card, ImVec2 mouseP
     };
     float halfLen = kResizeSideHandleLength * 0.5f;
 
-    if (nearCorner(left, top))     return ResizeHandle::NW;
-    if (nearCorner(right, top))    return ResizeHandle::NE;
-    if (nearCorner(left, bottom))  return ResizeHandle::SW;
+    if (nearCorner(left, top)) return ResizeHandle::NW;
+    if (nearCorner(right, top)) return ResizeHandle::NE;
+    if (nearCorner(left, bottom)) return ResizeHandle::SW;
     if (nearCorner(right, bottom)) return ResizeHandle::SE;
 
     // North/South edges
@@ -341,26 +495,46 @@ ResizeHandle ClientRenderer::hitTestResizeHandle(const Card& card, ImVec2 mouseP
 }
 
 // Resizes a card by the mouse delta, anchoring the edge opposite the grabbed handle.
-void ClientRenderer::applyCardResize(Card& card) {
-    ImVec2 delta = ImGui::GetIO().MouseDelta;
-    float dx = delta.x / camera.zoom;
-    float dy = delta.y / camera.zoom;
+ClientRenderer::CardGeometry ClientRenderer::applyCardResize(const CardGeometry& geometry, ImVec2 mouseDelta) const {
+    float dx = mouseDelta.x / camera.zoom;
+    float dy = mouseDelta.y / camera.zoom;
 
-    float left = card.x;
-    float top = card.y;
-    float right = card.x + card.width;
-    float bottom = card.y + card.height;
+    float left = geometry.x;
+    float top = geometry.y;
+    float right = geometry.x + geometry.width;
+    float bottom = geometry.y + geometry.height;
 
     switch (activeResizeHandle) {
-        case ResizeHandle::NW: left += dx;  top += dy;  break;
-        case ResizeHandle::N:  top += dy;                break;
-        case ResizeHandle::NE: right += dx; top += dy;   break;
-        case ResizeHandle::E:  right += dx;              break;
-        case ResizeHandle::SE: right += dx; bottom += dy; break;
-        case ResizeHandle::S:  bottom += dy;             break;
-        case ResizeHandle::SW: left += dx;  bottom += dy; break;
-        case ResizeHandle::W:  left += dx;               break;
-        default: return;
+        case ResizeHandle::NW:
+            left += dx;
+            top += dy;
+            break;
+        case ResizeHandle::N:
+            top += dy;
+            break;
+        case ResizeHandle::NE:
+            right += dx;
+            top += dy;
+            break;
+        case ResizeHandle::E:
+            right += dx;
+            break;
+        case ResizeHandle::SE:
+            right += dx;
+            bottom += dy;
+            break;
+        case ResizeHandle::S:
+            bottom += dy;
+            break;
+        case ResizeHandle::SW:
+            left += dx;
+            bottom += dy;
+            break;
+        case ResizeHandle::W:
+            left += dx;
+            break;
+        default:
+            return geometry;
     }
 
     // Clamp the moving edge to keep the card within the valid size range
@@ -388,16 +562,13 @@ void ClientRenderer::applyCardResize(Card& card) {
             bottom = top + kMaxCardSize;
     }
 
-    card.x = left;
-    card.y = top;
-    card.width = right - left;
-    card.height = bottom - top;
+    return {left, top, right - left, bottom - top};
 }
 
 // Draws the resize handles and sets the matching cursor for a card
-void ClientRenderer::drawResizeHandles(ImDrawList* draw_list, const Card& card, const BoardTheme& theme, ImVec2 boardCenter) {
-    ImVec2 p0 = worldToScreen(card.x, card.y, boardCenter);
-    ImVec2 p1 = worldToScreen(card.x + card.width, card.y + card.height, boardCenter);
+void ClientRenderer::drawResizeHandles(ImDrawList* draw_list, const CardGeometry& geometry, const BoardTheme& theme, ImVec2 boardCenter) {
+    ImVec2 p0 = worldToScreen(geometry.x, geometry.y, boardCenter);
+    ImVec2 p1 = worldToScreen(geometry.x + geometry.width, geometry.y + geometry.height, boardCenter);
 
     float half = kResizeHandleSize * 0.5f;
     float left = p0.x, top = p0.y;
@@ -431,17 +602,26 @@ void ClientRenderer::drawResizeHandles(ImDrawList* draw_list, const Card& card, 
     draw_list->AddRectFilled(ImVec2(right - half, midY - halfLen), ImVec2(right + half, midY + halfLen), handleCol, 2.0f);
 
     // Cursor parity with resize handles
-    ResizeHandle hovered = hitTestResizeHandle(card, ImGui::GetIO().MousePos, boardCenter);
+    ResizeHandle hovered = hitTestResizeHandle(geometry, ImGui::GetIO().MousePos, boardCenter);
     switch (hovered) {
         case ResizeHandle::N:
-        case ResizeHandle::S:    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS); break;
+        case ResizeHandle::S:
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            break;
         case ResizeHandle::E:
-        case ResizeHandle::W:    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); break;
+        case ResizeHandle::W:
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            break;
         case ResizeHandle::NE:
-        case ResizeHandle::SW:   ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW); break;
+        case ResizeHandle::SW:
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
+            break;
         case ResizeHandle::NW:
-        case ResizeHandle::SE:   ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE); break;
-        default: break;
+        case ResizeHandle::SE:
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+            break;
+        default:
+            break;
     }
 }
 
@@ -461,9 +641,11 @@ uint32_t ClientRenderer::hitTestConnector(const BoardState& localBoard, ImVec2 s
 
         const Card& src = srcIt->second;
         const Card& tgt = tgtIt->second;
+        const CardGeometry srcGeometry = geometryForCard(src);
+        const CardGeometry tgtGeometry = geometryForCard(tgt);
 
-        ImVec2 srcCenter = worldToScreen(src.x + src.width / 2.0f, src.y + src.height / 2.0f, boardCenter);
-        ImVec2 tgtCenter = worldToScreen(tgt.x + tgt.width / 2.0f, tgt.y + tgt.height / 2.0f, boardCenter);
+        ImVec2 srcCenter = worldToScreen(srcGeometry.x + srcGeometry.width / 2.0f, srcGeometry.y + srcGeometry.height / 2.0f, boardCenter);
+        ImVec2 tgtCenter = worldToScreen(tgtGeometry.x + tgtGeometry.width / 2.0f, tgtGeometry.y + tgtGeometry.height / 2.0f, boardCenter);
 
         float halfWidth = conn.thickness * camera.zoom * 0.5f + hitPadding;
         float distance = distanceToSegment(screenPos, srcCenter, tgtCenter);
@@ -500,21 +682,167 @@ void ClientRenderer::handleObjectSelection(uint32_t hoveredCardID, uint32_t hove
     }
 
     if (hoveredCardID != 0) {
-        selection = { MenuContextType::Card, hoveredCardID };
+        if (!(rightClick && selectedObjects.size() > 1 && isSelected(MenuContextType::Card, hoveredCardID))) {
+            setSelection({ MenuContextType::Card, hoveredCardID });
+        }
     } else if (hoveredConnectorID != 0) {
-        selection = { MenuContextType::Connector, hoveredConnectorID };
+        if (!(rightClick && selectedObjects.size() > 1 && isSelected(MenuContextType::Connector, hoveredConnectorID))) {
+            setSelection({ MenuContextType::Connector, hoveredConnectorID });
+        }
     } else if (backgroundHovered) {
-        selection = { MenuContextType::Background, 0 };
+        setSelection({ MenuContextType::Background, 0 });
     }
 }
 
-void ClientRenderer::handleConnectingMode(BoardState& localBoard, uint32_t hoveredCardID) {
+void ClientRenderer::setSelection(const ContextMenuTarget& target) {
+    selection = target;
+    selectedObjects.clear();
+    if (target.type == MenuContextType::Card || target.type == MenuContextType::Connector) {
+        selectedObjects.push_back(target);
+    }
+}
+
+void ClientRenderer::setMultipleSelection(const std::vector<ContextMenuTarget>& targets) {
+    selectionSidebarOpen = false;
+    selectedObjects.clear();
+    selectedObjects.reserve(targets.size());
+
+    for (const ContextMenuTarget& target : targets) {
+        if (target.type != MenuContextType::Card && target.type != MenuContextType::Connector) {
+            continue;
+        }
+
+        bool alreadySelected = false;
+        for (const ContextMenuTarget& selected : selectedObjects) {
+            if (selected.type == target.type && selected.targetID == target.targetID) {
+                alreadySelected = true;
+                break;
+            }
+        }
+        if (!alreadySelected) {
+            selectedObjects.push_back(target);
+        }
+    }
+
+    if (selectedObjects.empty()) {
+        selection = { MenuContextType::Background, 0 };
+    } else if (selectedObjects.size() == 1) {
+        selection = selectedObjects.front();
+    } else {
+        selection = { MenuContextType::MultipleSelection, 0 };
+    }
+}
+
+void ClientRenderer::updateSelectionSelection(const BoardState& board, ImVec2 boardCenter, bool backgroundHovered) {
+    const ImVec2 mousePos = ImGui::GetIO().MousePos;
+
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && backgroundHovered && !isConnecting) {
+        isSelectionSelecting = true;
+        selectionHasMoved = false;
+        selectionStart = mousePos;
+        selectionEnd = mousePos;
+    }
+
+    if (!isSelectionSelecting) {
+        return;
+    }
+
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        selectionEnd = mousePos;
+        const float dx = selectionEnd.x - selectionStart.x;
+        const float dy = selectionEnd.y - selectionStart.y;
+        if (dx * dx + dy * dy >= kSelectionDragThreshold * kSelectionDragThreshold) {
+            selectionHasMoved = true;
+        }
+    }
+
+    if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        return;
+    }
+
+    if (selectionHasMoved) {
+        selectObjectsInSelection(board, boardCenter);
+    } else {
+        setSelection({ MenuContextType::Background, 0 });
+    }
+    isSelectionSelecting = false;
+    selectionHasMoved = false;
+}
+
+void ClientRenderer::selectObjectsInSelection(const BoardState& localBoard, ImVec2 boardCenter) {
+    const ImVec2 selectionMin(
+        (selectionStart.x < selectionEnd.x) ? selectionStart.x : selectionEnd.x,
+        (selectionStart.y < selectionEnd.y) ? selectionStart.y : selectionEnd.y);
+    const ImVec2 selectionMax(
+        (selectionStart.x > selectionEnd.x) ? selectionStart.x : selectionEnd.x,
+        (selectionStart.y > selectionEnd.y) ? selectionStart.y : selectionEnd.y);
+    std::vector<ContextMenuTarget> targets;
+
+    for (uint32_t id : localBoard.getCardIDsInZOrder()) {
+        const auto cardIt = localBoard.cards.find(id);
+        if (cardIt == localBoard.cards.end()) {
+            continue;
+        }
+        const Card& card = cardIt->second;
+        const CardGeometry geometry = geometryForCard(card);
+        const ImVec2 cardMin = worldToScreen(geometry.x, geometry.y, boardCenter);
+        const ImVec2 cardMax = worldToScreen(geometry.x + geometry.width, geometry.y + geometry.height, boardCenter);
+        if (rectanglesOverlap(selectionMin, selectionMax, cardMin, cardMax)) {
+            targets.push_back({ MenuContextType::Card, id });
+        }
+    }
+
+    for (const auto& [id, connector] : localBoard.connectors) {
+        const auto srcIt = localBoard.cards.find(connector.sourceCardID);
+        const auto tgtIt = localBoard.cards.find(connector.targetCardID);
+        if (srcIt == localBoard.cards.end() || tgtIt == localBoard.cards.end()) {
+            continue;
+        }
+
+        const Card& source = srcIt->second;
+        const Card& target = tgtIt->second;
+        const CardGeometry sourceGeometry = geometryForCard(source);
+        const CardGeometry targetGeometry = geometryForCard(target);
+        const ImVec2 sourceCenter = worldToScreen(
+            sourceGeometry.x + sourceGeometry.width / 2.0f,
+            sourceGeometry.y + sourceGeometry.height / 2.0f, boardCenter);
+        const ImVec2 targetCenter = worldToScreen(
+            targetGeometry.x + targetGeometry.width / 2.0f,
+            targetGeometry.y + targetGeometry.height / 2.0f, boardCenter);
+        const float padding = connector.thickness * camera.zoom * 0.5f;
+        const ImVec2 paddedMin(selectionMin.x - padding, selectionMin.y - padding);
+        const ImVec2 paddedMax(selectionMax.x + padding, selectionMax.y + padding);
+        if (segmentIntersectsRectangle(sourceCenter, targetCenter, paddedMin, paddedMax)) {
+            targets.push_back({ MenuContextType::Connector, id });
+        }
+    }
+
+    setMultipleSelection(targets);
+}
+
+void ClientRenderer::deleteSelectedObjects(BoardCommandHandler& commandHandler) {
+    std::vector<BoardObjectRef> objects;
+    objects.reserve(selectedObjects.size());
+    for (const ContextMenuTarget& target : selectedObjects) {
+        if (target.type == MenuContextType::Card) {
+            objects.push_back({BoardObjectRef::Kind::Card, target.targetID});
+        } else if (target.type == MenuContextType::Connector) {
+            objects.push_back({BoardObjectRef::Kind::Connector, target.targetID});
+        }
+    }
+    commandHandler.handle(DeleteObjectsCommand{std::move(objects)});
+
+    setSelection({ MenuContextType::Background, 0 });
+    selectionSidebarOpen = false;
+}
+
+void ClientRenderer::handleConnectingMode(const BoardState& board, BoardCommandHandler& commandHandler, uint32_t hoveredCardID) {
     if (!isConnecting) {
         return;
     }
 
     // Error detection for deleted source card
-    if (localBoard.cards.find(connectingSourceCardID) == localBoard.cards.end()) {
+    if (board.cards.find(connectingSourceCardID) == board.cards.end()) {
         isConnecting = false;
     }
     // Cancel if user hits escape key
@@ -524,57 +852,79 @@ void ClientRenderer::handleConnectingMode(BoardState& localBoard, uint32_t hover
     // Left click on a card creates the connector and exits connecting mode
     else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoveredCardID != 0) {
         // Leave on success so user can select another target after invalid
-        if (localBoard.createConnector(connectingSourceCardID, hoveredCardID) != nullptr) {
+        if (board.cards.find(hoveredCardID) != board.cards.end() &&
+            !board.connectorExistsBetween(connectingSourceCardID, hoveredCardID)) {
+            commandHandler.handle(CreateConnectorCommand{connectingSourceCardID, hoveredCardID});
             isConnecting = false;
         }
     }
 }
 
 // Deletes whichever object is currently selected when the Delete key is pressed
-void ClientRenderer::handleKeyboardShortcuts(BoardState& localBoard) {
+void ClientRenderer::handleKeyboardShortcuts(BoardCommandHandler& commandHandler) {
     // Skip shortcuts while a text field has keyboard focus
     if (ImGui::GetIO().WantTextInput) {
         return;
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
-        if (selection.type == MenuContextType::Card) {
-            localBoard.deleteCard(selection.targetID);
-        } else if (selection.type == MenuContextType::Connector) {
-            localBoard.deleteConnector(selection.targetID);
+        if (!selectedObjects.empty()) {
+            deleteSelectedObjects(commandHandler);
         }
     }
 }
 
 bool ClientRenderer::isSelected(MenuContextType type, uint32_t id) const {
-    return selection.type == type && selection.targetID == id;
+    for (const ContextMenuTarget& selected : selectedObjects) {
+        if (selected.type == type && selected.targetID == id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void ClientRenderer::syncSelection(const BoardState& localBoard) {
-    if (selection.type == MenuContextType::Card && localBoard.cards.find(selection.targetID) == localBoard.cards.end()) {
-        selection = { MenuContextType::Background, 0 };
-    } else if (selection.type == MenuContextType::Connector && localBoard.connectors.find(selection.targetID) == localBoard.connectors.end()) {
+    selectedObjects.erase(
+        std::remove_if(selectedObjects.begin(), selectedObjects.end(), [&](const ContextMenuTarget& target) {
+            if (target.type == MenuContextType::Card) {
+                return localBoard.cards.find(target.targetID) == localBoard.cards.end();
+            }
+            if (target.type == MenuContextType::Connector) {
+                return localBoard.connectors.find(target.targetID) == localBoard.connectors.end();
+            }
+            return true;
+        }),
+        selectedObjects.end());
+
+    if (!selectedObjects.empty()) {
+        selection = selectedObjects.size() == 1
+            ? selectedObjects.front()
+            : ContextMenuTarget{ MenuContextType::MultipleSelection, 0 };
+    } else if (selection.type == MenuContextType::Card ||
+               selection.type == MenuContextType::Connector ||
+               selection.type == MenuContextType::MultipleSelection) {
         selection = { MenuContextType::Background, 0 };
     }
 }
 
-void ClientRenderer::handleContextMenu(BoardState& localBoard, ImVec2 boardCenter, const ContextMenuTarget& context) {
+void ClientRenderer::handleContextMenu(BoardCommandHandler& commandHandler, const ContextMenuTarget& context) {
     if (ImGui::BeginPopup("BoardContextMenu")) {
-        
+
         // Background/general right click menu
         if (context.type == MenuContextType::Background) {
 
             if (ImGui::MenuItem("Create Card")) {
                 float spawnX = contextMenuWorldPos.x;
                 float spawnY = contextMenuWorldPos.y;
-                localBoard.createCardAt(spawnX, spawnY, "Enter text...");
+                commandHandler.handle(CreateCardCommand{spawnX, spawnY, "Enter text..."});
             }
 
-            if (ImGui::MenuItem("Change Background Color...")) {
-                changeBackgroundColor();
+            if (ImGui::MenuItem("Edit theme...")) {
+                setSelection({ MenuContextType::Theme, 0 });
+                selectionSidebarOpen = true;
             }
         }
-        
+
         // Card right click menu
         else if (context.type == MenuContextType::Card) {
 
@@ -586,7 +936,7 @@ void ClientRenderer::handleContextMenu(BoardState& localBoard, ImVec2 boardCente
 
             // Delete card option (new options can be expanded under here)
             if (ImGui::MenuItem("Delete Card")) {
-                localBoard.deleteCard(context.targetID);
+                commandHandler.handle(DeleteCardCommand{context.targetID});
             }
         }
 
@@ -595,7 +945,14 @@ void ClientRenderer::handleContextMenu(BoardState& localBoard, ImVec2 boardCente
 
             // Delete connector option (new options can be expanded under here)
             if (ImGui::MenuItem("Delete Connector")) {
-                localBoard.deleteConnector(context.targetID);
+                commandHandler.handle(DeleteConnectorCommand{context.targetID});
+            }
+        }
+
+        // Multi-selection menu. Add future selection-wide actions here.
+        else if (context.type == MenuContextType::MultipleSelection) {
+            if (ImGui::MenuItem("Delete Selected")) {
+                deleteSelectedObjects(commandHandler);
             }
         }
 
@@ -603,10 +960,7 @@ void ClientRenderer::handleContextMenu(BoardState& localBoard, ImVec2 boardCente
     }
 }
 
-// Opens the background color editor for the board
-void ClientRenderer::changeBackgroundColor() {
-}
-
+// Maps a theme color selector to the matching BoardTheme field
 ImVec2 ClientRenderer::worldToScreen(float worldX, float worldY, ImVec2 boardCenter) const {
     return ImVec2(
         boardCenter.x + (worldX - camera.x) * camera.zoom,
@@ -621,8 +975,8 @@ ImVec2 ClientRenderer::screenToWorld(ImVec2 screenPos, ImVec2 boardCenter) const
     );
 }
 
-void ClientRenderer::drawGrid(ImDrawList* draw_list, BoardState& localBoard, ImVec2 board_p0, ImVec2 board_p1, ImVec2 boardCenter) {
-    Color gridColor = ThemeUtils::getGridLineColor(localBoard.theme.boardBackgroundColor);
+void ClientRenderer::drawGrid(ImDrawList* draw_list, const BoardState& board, ImVec2 board_p0, ImVec2 board_p1, ImVec2 boardCenter) {
+    Color gridColor = ThemeUtils::getGridLineColor(inspector.displayTheme(board).boardBackgroundColor);
     uint32_t gridColIm = ThemeUtils::toImColor(gridColor);
     float gridSpacingWorld = 50.0f;
     float zoom = camera.zoom;
@@ -646,41 +1000,45 @@ void ClientRenderer::drawGrid(ImDrawList* draw_list, BoardState& localBoard, ImV
     }
 }
 
-void ClientRenderer::drawConnectors(ImDrawList* draw_list, BoardState& localBoard, ImVec2 boardCenter) {
-    for (const auto& [id, conn] : localBoard.connectors) {
-        if (localBoard.cards.find(conn.sourceCardID) == localBoard.cards.end() ||
-            localBoard.cards.find(conn.targetCardID) == localBoard.cards.end()) {
+void ClientRenderer::drawConnectors(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
+    const BoardTheme theme = inspector.displayTheme(board);
+    for (const auto& [id, conn] : board.connectors) {
+        if (board.cards.find(conn.sourceCardID) == board.cards.end() ||
+            board.cards.find(conn.targetCardID) == board.cards.end()) {
             continue;
         }
 
-        const Card& src = localBoard.cards.at(conn.sourceCardID);
-        const Card& tgt = localBoard.cards.at(conn.targetCardID);
+        const Card& src = board.cards.at(conn.sourceCardID);
+        const Card& tgt = board.cards.at(conn.targetCardID);
+        const CardGeometry srcGeometry = geometryForCard(src);
+        const CardGeometry tgtGeometry = geometryForCard(tgt);
 
-        ImVec2 srcCenter = worldToScreen(src.x + src.width / 2.0f, src.y + src.height / 2.0f, boardCenter);
-        ImVec2 tgtCenter = worldToScreen(tgt.x + tgt.width / 2.0f, tgt.y + tgt.height / 2.0f, boardCenter);
+        ImVec2 srcCenter = worldToScreen(srcGeometry.x + srcGeometry.width / 2.0f, srcGeometry.y + srcGeometry.height / 2.0f, boardCenter);
+        ImVec2 tgtCenter = worldToScreen(tgtGeometry.x + tgtGeometry.width / 2.0f, tgtGeometry.y + tgtGeometry.height / 2.0f, boardCenter);
 
         // Selected connectors get accent colored border (from theme)
         if (isSelected(MenuContextType::Connector, conn.connectorID)) {
-            uint32_t accentColorIm = ThemeUtils::toImColor(localBoard.theme.accentColor);
+            uint32_t accentColorIm = ThemeUtils::toImColor(theme.accentColor);
             draw_list->AddLine(srcCenter, tgtCenter, accentColorIm, (conn.thickness + 4.0f) * camera.zoom);
         }
 
-        uint32_t connColorIm = ThemeUtils::toImColor(conn.color);
+        uint32_t connColorIm = ThemeUtils::toImColor(inspector.displayConnectorColor(conn));
         draw_list->AddLine(srcCenter, tgtCenter, connColorIm, conn.thickness * camera.zoom);
     }
 }
 
-void ClientRenderer::drawConnectionPreview(ImDrawList* draw_list, BoardState& localBoard, ImVec2 boardCenter) {
+void ClientRenderer::drawConnectionPreview(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
     if (!isConnecting) return;
 
     // Verify source card still exists before drawing preview
-    if (localBoard.cards.find(connectingSourceCardID) != localBoard.cards.end()) {
-        const Card& srcCard = localBoard.cards.at(connectingSourceCardID);
-        
-        ImVec2 srcCenter = worldToScreen(srcCard.x + srcCard.width / 2.0f, srcCard.y + srcCard.height / 2.0f, boardCenter);
+    if (board.cards.find(connectingSourceCardID) != board.cards.end()) {
+        const Card& srcCard = board.cards.at(connectingSourceCardID);
+        const CardGeometry geometry = geometryForCard(srcCard);
+
+        ImVec2 srcCenter = worldToScreen(geometry.x + geometry.width / 2.0f, geometry.y + geometry.height / 2.0f, boardCenter);
         ImVec2 mousePos = ImGui::GetIO().MousePos;
 
-        uint32_t previewColor = ThemeUtils::toImColor(localBoard.theme.connectorColor);
+        uint32_t previewColor = ThemeUtils::toImColor(inspector.displayTheme(board).connectorColor);
         draw_list->AddLine(srcCenter, mousePos, previewColor, 10.0f * camera.zoom);
     } else {
         // Fallback in case card was deleted in the split second we rendered (stupid)
@@ -688,184 +1046,95 @@ void ClientRenderer::drawConnectionPreview(ImDrawList* draw_list, BoardState& lo
     }
 }
 
-void ClientRenderer::drawCards(ImDrawList* draw_list, BoardState& localBoard, ImVec2 boardCenter) {
-    for (const auto& [id, card] : localBoard.cards) {
-        ImVec2 cardMin = worldToScreen(card.x, card.y, boardCenter);
-        ImVec2 cardSize(card.width * camera.zoom, card.height * camera.zoom);
+void ClientRenderer::drawCards(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
+    const BoardTheme theme = inspector.displayTheme(board);
+    for (uint32_t cardID : board.getCardIDsInZOrder()) {
+        auto cardIt = board.cards.find(cardID);
+        if (cardIt == board.cards.end()) {
+            continue;
+        }
+        const Card& card = cardIt->second;
+        const CardGeometry geometry = geometryForCard(card);
+        const Color cardColor = inspector.displayCardColor(card);
+        ImVec2 cardMin = worldToScreen(geometry.x, geometry.y, boardCenter);
+        ImVec2 cardSize(geometry.width * camera.zoom, geometry.height * camera.zoom);
         ImVec2 cardMax(cardMin.x + cardSize.x, cardMin.y + cardSize.y);
 
-        uint32_t bgCol = ThemeUtils::toImColor(card.color);
-        uint32_t textCol = ThemeUtils::toImColor(card.getTextColor());
+        uint32_t bgCol = ThemeUtils::toImColor(cardColor);
+        uint32_t textCol = ThemeUtils::toImColor(ThemeUtils::getTextColor(cardColor));
 
-        // Selected cards are outlined with the theme accent color
+        const bool showingDropPreview = card.cardID == dropPreviewCardID;
         bool selected = isSelected(MenuContextType::Card, card.cardID);
-        uint32_t borderCol = selected
-            ? ThemeUtils::toImColor(localBoard.theme.accentColor)
-            : ThemeUtils::toImColor(card.getBorderColor());
-        float borderThickness = selected ? 4.0f : 2.0f;
+        uint32_t borderCol = (selected || showingDropPreview)
+            ? ThemeUtils::toImColor(theme.accentColor)
+            : ThemeUtils::toImColor(ThemeUtils::getCardBorder(cardColor));
+        float borderThickness = (selected || showingDropPreview) ? 4.0f : 2.0f;
 
         draw_list->AddRectFilled(cardMin, cardMax, bgCol, 6.0f);
+
+        const ClientImageCache::Image* image = card.mediaURL.empty() ? nullptr : imageCache.find(card.mediaURL);
+        const bool hasLoadedImage = image && image->texture != 0;
+        if (hasLoadedImage) {
+            const float padding = std::min(10.0f * camera.zoom, std::min(cardSize.x, cardSize.y) * 0.05f);
+            const float availableWidth = std::max(0.0f, cardSize.x - padding * 2.0f);
+            const float availableHeight = std::max(0.0f, cardSize.y - padding * 2.0f);
+            const float scale = std::min(availableWidth / image->width, availableHeight / image->height);
+            if (scale > 0.0f) {
+                const float imageWidth = image->width * scale;
+                const float imageHeight = image->height * scale;
+                const ImVec2 imageMin(cardMin.x + (cardSize.x - imageWidth) * 0.5f,
+                                      cardMin.y + (cardSize.y - imageHeight) * 0.5f);
+                const ImVec2 imageMax(imageMin.x + imageWidth, imageMin.y + imageHeight);
+                draw_list->PushClipRect(cardMin, cardMax, true);
+                drawImageTexture(draw_list, image->texture, imageMin, imageMax);
+                draw_list->PopClipRect();
+            }
+        }
+
+        // Selected cards and active image drops use the accent outline.
         draw_list->AddRect(cardMin, cardMax, borderCol, 6.0f, 0, borderThickness);
 
-        // Scale font size by camera zoom
-        float fontSize = ImGui::GetFontSize() * camera.zoom;
-        float textPadding = 10.0f * camera.zoom;
+        if (showingDropPreview) {
+            const GLuint uploadIconTexture = imageCache.uploadIconTexture();
+            const int uploadIconWidth = imageCache.uploadIconWidth();
+            const int uploadIconHeight = imageCache.uploadIconHeight();
+            if (uploadIconTexture != 0 && uploadIconWidth > 0 && uploadIconHeight > 0) {
+                const float iconMaxSize = std::min(cardSize.x, cardSize.y) * 0.3f;
+                const float iconScale = std::min(iconMaxSize / uploadIconWidth, iconMaxSize / uploadIconHeight);
+                const float iconWidth = uploadIconWidth * iconScale;
+                const float iconHeight = uploadIconHeight * iconScale;
+                const ImVec2 iconMin(cardMin.x + (cardSize.x - iconWidth) * 0.5f,
+                                     cardMin.y + (cardSize.y - iconHeight) * 0.5f);
+                drawImageTexture(draw_list, uploadIconTexture, iconMin, ImVec2(iconMin.x + iconWidth, iconMin.y + iconHeight));
+            }
+        } else if (card.mediaURL.empty()) {
+            // Scale font size by camera zoom
+            float fontSize = ImGui::GetFontSize() * camera.zoom;
+            float textPadding = 10.0f * camera.zoom;
 
-        // Wrap the text to the card's inner width so it never spills horizontally
-        float wrapWidth = cardMax.x - (cardMin.x + textPadding) - textPadding;
+            // Wrap the text to the card's inner width so it never spills horizontally
+            float wrapWidth = cardMax.x - (cardMin.x + textPadding) - textPadding;
 
-        // Backup clip text in case wrap fails
-        draw_list->PushClipRect(cardMin, cardMax, true);
-        draw_list->AddText(ImGui::GetFont(), fontSize, ImVec2(cardMin.x + textPadding, cardMin.y + textPadding), textCol, card.text.c_str(), NULL, wrapWidth);
-        draw_list->PopClipRect();
+            draw_list->PushClipRect(cardMin, cardMax, true);
+            draw_list->AddText(ImGui::GetFont(), fontSize, ImVec2(cardMin.x + textPadding, cardMin.y + textPadding), textCol, card.text.c_str(), NULL, wrapWidth);
+            draw_list->PopClipRect();
+        }
     }
 
     // Draw resize handles last so they sit on top of every card
     if (selection.type == MenuContextType::Card) {
-        auto it = localBoard.cards.find(selection.targetID);
-        if (it != localBoard.cards.end()) {
-            drawResizeHandles(draw_list, it->second, localBoard.theme, boardCenter);
+        auto it = board.cards.find(selection.targetID);
+        if (it != board.cards.end()) {
+            drawResizeHandles(draw_list, geometryForCard(it->second), theme, boardCenter);
         }
     }
 }
 
 // Opens selection sidebar for object selected on right side of the screen
-void ClientRenderer::drawSelectionSidebar(BoardState& localBoard) {
-    // Return if an object was not selected 
-    if (!selectionSidebarOpen || selection.type == MenuContextType::Background) {
-        return;
-    }
-
-    // Set panel to right side of screen
-    const float sidebarWidth = 320.0f;
-    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImVec2(displaySize.x - sidebarWidth, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displaySize.y), ImGuiCond_Always);
-
-    if (ImGui::Begin(getSelectionTitle(selection.type), &selectionSidebarOpen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
-        ImGui::PushID(static_cast<int>(selection.targetID));
-
-        // Per-selected object method so we can scale if we need/want to
-        switch (selection.type) {
-            case MenuContextType::Card:
-                drawCardOptions(localBoard);
-                break;
-            case MenuContextType::Connector:
-                drawConnectorOptions(localBoard);
-                break;
-            default:
-                break;
-        }
-
-        ImGui::PopID();
-    }
-    ImGui::End();
-}
-
-// Title shown on the sidebar window for a given object type.
-const char* ClientRenderer::getSelectionTitle(MenuContextType type) const {
-    switch (type) {
-        case MenuContextType::Card:      return "Card";
-        case MenuContextType::Connector: return "Connector";
-        default:                         return "Selection";
-    }
-}
-
-// Card editor options
-void ClientRenderer::drawCardOptions(BoardState& localBoard) {
-    auto cardIt = localBoard.cards.find(selection.targetID);
-    if (cardIt == localBoard.cards.end()) {
-        return;
-    }
-    Card& card = cardIt->second;
-
-    // Text content editor
-    ImGui::TextUnformatted("Text:");
-    char textBuffer[4096];
-    snprintf(textBuffer, sizeof(textBuffer), "%s", card.text.c_str());
-    ImVec2 textSize(ImGui::GetContentRegionAvail().x, 100.0f);
-    if (ImGui::InputTextMultiline("##text", textBuffer, sizeof(textBuffer), textSize, ImGuiInputTextFlags_WordWrap)) {
-        card.text = textBuffer;
-    }
-
-    // Card size editors
-    ImGui::TextUnformatted("Size X:");
-    ImGui::InputFloat("##sizeX", &card.width, 1.0f, 1.0f, "%.2f");
-    if (!ImGui::IsItemActive()) {
-        if (card.width < kMinCardSize) card.width = kMinCardSize;
-        if (card.width > kMaxCardSize) card.width = kMaxCardSize;
-    }
-
-    ImGui::TextUnformatted("Size Y:");
-    ImGui::InputFloat("##sizeY", &card.height, 1.0f, 1.0f, "%.2f");
-    if (!ImGui::IsItemActive()) {
-        if (card.height < kMinCardSize) card.height = kMinCardSize;
-        if (card.height > kMaxCardSize) card.height = kMaxCardSize;
-    }
-
-    // Need color editor
-}
-
-// Connector editor options
-void ClientRenderer::drawConnectorOptions(BoardState& localBoard) {
-    auto connIt = localBoard.connectors.find(selection.targetID);
-    if (connIt == localBoard.connectors.end()) {
-        return;
-    }
-    Connector& connector = connIt->second;
-
-    // Thickness editor with a reset-to-default button
-    ImGui::TextUnformatted("Thickness:");
-    float resetButtonWidth = ImGui::CalcTextSize("R").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - resetButtonWidth - ImGui::GetStyle().ItemSpacing.x);
-    ImGui::InputFloat("##thickness", &connector.thickness, 1.0f, 1.0f, "%.2f");
-
-    // Keep thickness positive once editing finishes so the connector stays valid
-    if (!ImGui::IsItemActive() && connector.thickness < 0.1f) {
-        connector.thickness = 0.1f;
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("R")) {
-        connector.thickness = localBoard.user_settings.defaultConnectorThickness;
-    }
-}
-
-// Force theme colors on ImGUI elements
-void ClientRenderer::applyTheme(const BoardTheme& theme) {
-    ImGuiStyle& style = ImGui::GetStyle();
-
-    auto toVec4 = [](const Color& c) {
-        return ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f);
-    };
-
-    const ImVec4 base = toVec4(theme.cardColor);
-    const ImVec4 hovered = toVec4(ThemeUtils::shift(theme.cardColor, 20, 20, 20));
-    const ImVec4 active = toVec4(ThemeUtils::shift(theme.cardColor, -20, -20, -20));
-    const ImVec4 text = toVec4(ThemeUtils::getTextColor(theme.cardColor));
-
-    // Labels & text elements
-    style.Colors[ImGuiCol_Text] = text;
-    // Input fields
-    style.Colors[ImGuiCol_FrameBg] = base;
-    style.Colors[ImGuiCol_FrameBgHovered] = hovered;
-    style.Colors[ImGuiCol_FrameBgActive] = active;
-    // Buttons
-    style.Colors[ImGuiCol_Button] = base;
-    style.Colors[ImGuiCol_ButtonHovered] = hovered;
-    style.Colors[ImGuiCol_ButtonActive] = active;
-    // Sliders & checkmarks
-    style.Colors[ImGuiCol_SliderGrab] = hovered;
-    style.Colors[ImGuiCol_SliderGrabActive] = active;
-    style.Colors[ImGuiCol_CheckMark] = text;
-    // Window title bars
-    style.Colors[ImGuiCol_TitleBg] = base;
-    style.Colors[ImGuiCol_TitleBgActive] = hovered;
-    style.Colors[ImGuiCol_TitleBgCollapsed] = base;
-}
-
 // Shutdown method (run this on closing renderer/app)
 void ClientRenderer::shutdown() {
+    imageCache.shutdown();
+
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

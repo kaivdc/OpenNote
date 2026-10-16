@@ -21,7 +21,7 @@ ifeq ($(UNAME_S),Darwin)
     # OpenGL is deprecated
     CXXFLAGS       += -DGL_SILENCE_DEPRECATION
     CLIENT_LDFLAGS += -lGLEW -lglfw -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
-else ($(UNAME_S),Linux)
+else ifeq ($(UNAME_S),Linux)
     # Linux & WSL
     SERVER_LDFLAGS += -lcrypto
     CLIENT_LDFLAGS += -lGLEW -lglfw -lGL -ldl -lcrypto
@@ -43,8 +43,10 @@ OpenNoteServer: OpenNoteServer.o
 	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o $(SERVER_LDFLAGS)
 
 # Build the client exe (client, renderer, and ImGui)
-OpenNoteClient: OpenNoteClient.o ClientRenderer.o $(IMGUI_OBJS)
-	$(CXX) $(CXXFLAGS) -o OpenNoteClient OpenNoteClient.o ClientRenderer.o $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
+OpenNoteClient: OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o $(IMGUI_OBJS)
+	$(CXX) $(CXXFLAGS) -o OpenNoteClient OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
+
+OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o: BoardCommands.h BoardUIState.h BoardInspector.h ClientImageCache.h ClientRenderer.h LocalBoardCommandHandler.h
 
 %.o: %.cpp BoardStructs.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@

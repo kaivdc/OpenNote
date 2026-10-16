@@ -2,6 +2,7 @@
 #define BOARD_STRUCTS_H
 
 #include <string>
+#include <algorithm>
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
@@ -172,6 +173,53 @@ struct BoardState {
         return (boardID > 0);
     }
 
+    vector<uint32_t> getCardIDsInZOrder() const {
+        vector<uint32_t> orderedIDs;
+        orderedIDs.reserve(cards.size());
+        for (const auto& [id, card] : cards) {
+            orderedIDs.push_back(id);
+        }
+        sort(orderedIDs.begin(), orderedIDs.end(), [this](uint32_t leftID, uint32_t rightID) {
+            const Card& left = cards.at(leftID);
+            const Card& right = cards.at(rightID);
+            if (left.zIndex != right.zIndex) {
+                return left.zIndex < right.zIndex;
+            }
+            return leftID < rightID;
+        });
+        return orderedIDs;
+    }
+
+    // Raises one card and normalizes the remaining indices to avoid gaps or overflow.
+    void bringCardToFront(uint32_t cardID) {
+        auto topCard = cards.find(cardID);
+        if (topCard == cards.end()) {
+            return;
+        }
+
+        vector<uint32_t> otherIDs;
+        otherIDs.reserve(cards.size() - 1);
+        for (const auto& [id, card] : cards) {
+            if (id != cardID) {
+                otherIDs.push_back(id);
+            }
+        }
+        sort(otherIDs.begin(), otherIDs.end(), [this](uint32_t leftID, uint32_t rightID) {
+            const Card& left = cards.at(leftID);
+            const Card& right = cards.at(rightID);
+            if (left.zIndex != right.zIndex) {
+                return left.zIndex < right.zIndex;
+            }
+            return leftID < rightID;
+        });
+
+        uint32_t nextZIndex = 1;
+        for (uint32_t id : otherIDs) {
+            cards.at(id).zIndex = nextZIndex++;
+        }
+        topCard->second.zIndex = nextZIndex;
+    }
+
     bool isConnectorValid(const Connector& connector) const {
         if(!connector.isValid()) 
         {
@@ -222,6 +270,7 @@ struct BoardState {
         nextCardID++;
 
         cards[assignedID] = card;
+        bringCardToFront(assignedID);
         return &cards[assignedID];
     }
 

@@ -13,6 +13,7 @@
 #include <bit>
 #include "BoardStructs.h"
 #include "ClientRenderer.h"
+#include "LocalBoardCommandHandler.h"
 #include "ClientSettings.h"
 
 using namespace std;
@@ -150,10 +151,11 @@ std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
     BoardState localBoard;
     localBoard.user_settings = user_settings;
     localBoard.boardID = 1;
+    LocalBoardCommandHandler localCommandHandler(localBoard);
     
     // Main rendering loop
     while (!renderer.shouldClose()) {
-        renderer.updateAndRender(localBoard);
+        renderer.updateAndRender(localBoard, localCommandHandler);
     }
 
     if (!window) {
