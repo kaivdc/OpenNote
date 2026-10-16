@@ -6,6 +6,9 @@
 #include "BoardStructs.h"
 #include <algorithm>
 #include <cmath>
+#include "BoardCommands.h"
+#include "BoardInspector.h"
+#include "LocalBoardCommandHandler.h"
 
 using namespace std;
 
@@ -415,8 +418,6 @@ uint32_t ClientRenderer::submitCardHitboxes(const BoardState& board, BoardComman
 
         ImGui::PushID(static_cast<int>(card.cardID));
         ImGui::SetCursorScreenPos(screenPos);
-        // Hitboxes are submitted back-to-front; allow each later (higher-z) card
-        // to take hover and click priority over the cards underneath it.
         ImGui::SetNextItemAllowOverlap();
         ImGui::InvisibleButton("##cardHitbox", screenSize, ImGuiButtonFlags_MouseButtonLeft);
 

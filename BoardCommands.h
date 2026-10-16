@@ -9,8 +9,8 @@
 #include <vector>
 
 struct CreateCardCommand {
-    float centerX;
-    float centerY;
+    float x;
+    float y;
     std::string text;
 };
 
@@ -56,7 +56,7 @@ struct SetCardTextCommand {
 
 struct SetCardImageCommand {
     uint32_t cardID;
-    std::string source;
+    std::string imageSource;
 };
 
 struct SetCardColorCommand {
@@ -108,7 +108,9 @@ using BoardCommand = std::variant<
 
 class BoardCommandHandler {
 public:
+    // Allows derived command handlers to be deleted through the base class
     virtual ~BoardCommandHandler() = default;
+    // Applies a board command using the active board handler
     virtual void handle(const BoardCommand& command) = 0;
 };
 

@@ -4,6 +4,7 @@
 
 using namespace std;
 
+// Wraps an opcode and payload in a packet object
 json createPacket(OpCode opcode, const json& payload)
 {
   json header;
@@ -15,12 +16,14 @@ json createPacket(OpCode opcode, const json& payload)
   return packet;
 }
 
+// Creates a heartbeat packet
 json heartBeatPacket()
 {
   json payload;
   return createPacket(OpCode::HEARTBEAT, payload);
 }
 
+// Creates an authentication request with the client and board details
 json AuthRequestPacket(string version, const uint32_t boardID, const string authToken)
 {
   json payload;
@@ -31,6 +34,7 @@ json AuthRequestPacket(string version, const uint32_t boardID, const string auth
   return createPacket(OpCode::AUTH_REQ, payload);
 }
 
+// Creates a card movement packet with its position and size
 json moveCardPacket(uint32_t cardID, float x, float y, float width, float height)
 {
   json payload;
@@ -42,6 +46,7 @@ json moveCardPacket(uint32_t cardID, float x, float y, float width, float height
   return createPacket(OpCode::MOVE_CARD, payload);
 }
 
+// Creates a card movement packet with its position, size, and draw order
 json moveCardPacket(uint32_t cardID, float x, float y, uint32_t zIndex, float width, float height)
 {
   json payload;
@@ -54,6 +59,7 @@ json moveCardPacket(uint32_t cardID, float x, float y, uint32_t zIndex, float wi
   return createPacket(OpCode::MOVE_CARD, payload);
 }
 
+// Creates a packet that changes a card's text
 json editTextPacket(uint32_t cardID, const string& text)
 {
   json payload;
@@ -62,6 +68,7 @@ json editTextPacket(uint32_t cardID, const string& text)
   return createPacket(OpCode::EDIT_CARD_CONTENT, payload);
 }
 
+// Creates a card packet with its position, size, and text
 json createCardPacket(float x, float y, float width, float height, const string& text)
 {
   json payload;
@@ -73,8 +80,8 @@ json createCardPacket(float x, float y, float width, float height, const string&
   return createPacket(OpCode::CREATE_CARD, payload);
 }
 
-//unsure if mediaURL needs its own overload
-json createCardPacket(float x, float y, float width, float height, const string& text, const string& mediaUrl)
+// Creates a card packet with its position, size, text, and image URL
+json createCardPacket(float x, float y, float width, float height, const string& text, const string& mediaURL)
 {
   json payload;
   payload["x"] = x;
@@ -82,16 +89,18 @@ json createCardPacket(float x, float y, float width, float height, const string&
   payload["width"] = width;
   payload["height"] = height;
   payload["text"] = text;
-  payload["mediaUrl"] = mediaUrl;
+  payload["mediaURL"] = mediaURL;
   return createPacket(OpCode::CREATE_CARD, payload);
 }
 
+// Creates a disconnect packet
 json disconnectPacket()
 {
   json payload;
   return createPacket(OpCode::DISCONNECT, payload);
 }
 
+// Creates a packet that deletes a card
 json deleteCardPacket(uint32_t cardID)
 {
   json payload;

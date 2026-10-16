@@ -24,8 +24,7 @@ json editTextPacket(uint32_t cardID, const string& text);
 
 json createCardPacket(float x, float y, float width, float height, const string& text);
 
-//unsure if mediaURL needs its own overload
-json createCardPacket(float x, float y, float width, float height, const string& text, const string& mediaUrl);
+json createCardPacket(float x, float y, float width, float height, const string& text, const string& mediaURL);
 
 json disconnectPacket();
 

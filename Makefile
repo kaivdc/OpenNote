@@ -39,14 +39,15 @@ IMGUI_OBJS = $(IMGUI_SRCS:.cpp=.o)
 all: OpenNoteServer OpenNoteClient
 
 # Build the Server exe
-OpenNoteServer: OpenNoteServer.o
-	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o $(SERVER_LDFLAGS)
+OpenNoteServer: OpenNoteServer.o ServerBoardCommandProcessor.o
+	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o ServerBoardCommandProcessor.o $(SERVER_LDFLAGS)
 
 # Build the client exe (client, renderer, and ImGui)
 OpenNoteClient: OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o $(IMGUI_OBJS)
 	$(CXX) $(CXXFLAGS) -o OpenNoteClient OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
 
 OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o: BoardCommands.h BoardUIState.h BoardInspector.h ClientImageCache.h ClientRenderer.h LocalBoardCommandHandler.h
+OpenNoteServer.o ServerBoardCommandProcessor.o: ServerBoardCommandProcessor.h
 
 %.o: %.cpp BoardStructs.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@

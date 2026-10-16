@@ -10,5 +10,6 @@ imgui/*.o
 imgui/backends/*.o
 
 settings.json
+imgui.ini
 
 assets/*
