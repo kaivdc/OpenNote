@@ -45,10 +45,11 @@ OpenNoteServer: OpenNoteServer.o ServerBoardCommandProcessor.o BoardDatabase.o
 	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o ServerBoardCommandProcessor.o BoardDatabase.o $(SERVER_LDFLAGS)
 
 # Build the client exe (client, renderer, and ImGui)
-OpenNoteClient: OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o $(IMGUI_OBJS)
-	$(CXX) $(CXXFLAGS) -o OpenNoteClient OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
+OpenNoteClient: OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o PacketCreation.o $(IMGUI_OBJS)
+	$(CXX) $(CXXFLAGS) -o OpenNoteClient OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o PacketCreation.o $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
 
 OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o: BoardCommands.h BoardUIState.h BoardInspector.h ClientImageCache.h ClientRenderer.h LocalBoardCommandHandler.h
+PacketCreation.o: PacketCreation.h
 OpenNoteServer.o ServerBoardCommandProcessor.o: ServerBoardCommandProcessor.h
 BoardDatabase.o: BoardDatabase.h
 

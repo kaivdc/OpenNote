@@ -141,3 +141,8 @@ bool sendPacket(int sock, uint8_t msgType, const string& payloadStr) {
     return sendAll(sock, header, sizeof(header)) &&
            (payloadStr.empty() || sendAll(sock, payloadStr.data(), payloadStr.size()));
 }
+
+void sendError(int sock, int errCode, const string& errorMsg) {
+    const string jsonPayload = json{{"errCode", errCode}, {"errorMsg", errorMsg}}.dump();
+    sendPacket(sock, 0xFF, jsonPayload);
+}

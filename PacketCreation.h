@@ -9,27 +9,31 @@ using json = nlohmann::json;
 constexpr size_t HEADER_SIZE = 5; // 5 byte header: 1-byte msgType, 4-byte payloadLength
 constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB max payload
 
-json createPacket(OpCode opcode, const json& payload);
+bool sendPacket(int sock, uint8_t msgType, const string& payloadStr);
 
-json heartBeatPacket(int sock);
+void sendError(int sock, int errCode, const string& errorMsg);
 
-json AuthRequestPacket(int sock, const string version, const uint32_t boardID, const string authToken);
+void createPacket(OpCode opcode, const json& payload);
 
-json moveCardPacket(int sock,uint32_t cardID, float x, float y, float width, float height);
+void heartBeatPacket(int sock);
+
+void AuthRequestPacket(int sock, const string version, const uint32_t boardID, const string authToken);
+
+void moveCardPacket(int sock,uint32_t cardID, float x, float y, float width, float height);
 
 //overload for moveCardPacket with zIndex]
-json moveCardPacket(int sock, uint32_t cardID, float x, float y, uint32_t zIndex, float width, float height);
+void moveCardPacket(int sock, uint32_t cardID, float x, float y, uint32_t zIndex, float width, float height);
 
-json editTextPacket(int sock, uint32_t cardID, const string& text);
+void editTextPacket(int sock, uint32_t cardID, const string& text);
 
-json createCardPacket(int sock, float x, float y, float width, float height, const string& text);
+void createCardPacket(int sock, float x, float y, float width, float height, const string& text);
 
 //unsure if mediaURL needs its own overload
-json createCardPacket(int sock, float x, float y, float width, float height, const string& text, const string& mediaURL);
+void createCardPacket(int sock, float x, float y, float width, float height, const string& text, const string& mediaURL);
 
-json disconnectPacket(int sock);
+void disconnectPacket(int sock);
 
-json deleteCardPacket(int sock, uint32_t cardID);
+void deleteCardPacket(int sock, uint32_t cardID);
 
 
 #endif

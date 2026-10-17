@@ -14,6 +14,7 @@
 #include "ClientRenderer.h"
 #include "LocalBoardCommandHandler.h"
 #include "ClientSettings.h"
+#include "PacketCreation.h"
 
 using namespace std;
 using json = nlohmann::json;
@@ -23,62 +24,16 @@ using json = nlohmann::json;
 #define STDIN 0
 #define VERSION "0.0.1"
 
-constexpr size_t HEADER_SIZE = 5; // 5 byte header: 1-byte msgType, 4-byte payloadLength
-constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB max payload
+mutex stateMutex;
 
-// Read Packet -- Need to move later
-void packetRead(int sock)
-{
-  char header[5];
-  if (!readExact(sock, header, 5))
-  {
-    cerr << "Client disconnected or header read failed. \n";
-    return;
-  }
-  // Extract the message type and payload length from the header
-  uint8_t msgType = static_cast<uint8_t>(header[0]);
-  uint32_t networkLen;
-  memcpy(&networkLen, &header[1], 4);
-  // network to host
-  uint32_t payloadLen = ntohl(networkLen);
-  // Check for payload length exceeding maximum allowed size
-  if (payloadLen > MAX_PAYLOAD_SIZE)
-  {
-    cerr << "Payload length exceeds maximum allowed size.\n";
-    return;
-  }
-  else
-  {
-    vector<char> payloadBuffer(payloadLen);
-    if (!readExact(sock, payloadBuffer.data(), payloadLen))
-    {
-      cerr << "Client disconnected or payload read failed. \n";
-      return;
-    }
-    string payloadStr(payloadBuffer.begin(), payloadBuffer.end());
-    // Process the received packet based on msgType and payloadStr
-    switch (msgType) {
-      case static_cast<uint8_t>(OpCode::HEARTBEAT):
-        cout << "[DEBUG] : Received HEARTBEAT packet.\n";
-        break;
-      case static_cast<uint8_t>(OpCode::MOVE_CARD):
-        cout << "[DEBUG] : Received MOVE_CARD packet with payload: " << payloadStr << "\n";
-        break;
-      case static_cast<uint8_t>(OpCode::EDIT_CARD_CONTENT):
-        cout << "[DEBUG] : Received EDIT_CARD_CONTENT packet with payload: " << payloadStr << "\n";
-        break;
-      case static_cast<uint8_t>(OpCode::CREATE_CARD):
-        cout << "[DEBUG] : Received CREATE_CARD packet with payload: " << payloadStr << "\n";
-        break;
-      case static_cast<uint8_t>(OpCode::DELETE_CARD):
-        cout << "[DEBUG] : Received DELETE_CARD packet with payload: " << payloadStr << "\n";
-        break;
-      default:
-        cerr << "[ERROR] : Unknown message type received: " << static_cast<int>(msgType) << "\n";
-    }
-  }
+bool handleSyncBoard(int clientSocket, const std::string& payloadStr);
+void handleBoardCommand(int clientSocket, OpCode opcode, const std::string& payloadStr);
 
-}
+void broadcastToClients(const std::vector<int>& clients, int senderSocket, uint8_t msgType, const std::string& payloadStr, bool includeSender);
+void cleanupClientSession(int clientSocket);
+bool readExact(int sock, char* buffer, size_t bytesToRead);
+bool sendPacket(int sock, uint8_t msgType, const std::string& payloadStr);
+void sendError(int sock, int errCode, const std::string& errorMsg);
 
 // Reads the requested number of bytes, handling partial TCP reads
 bool readExact(int sock, char* buffer, size_t bytesToRead) {
@@ -97,6 +52,82 @@ bool readExact(int sock, char* buffer, size_t bytesToRead) {
     return true;
 }
 
+// Read Packet -- Need to move later
+void clientReveivingLoop(long childSocket)
+{
+    char headerBuf[5];
+
+    while (1)
+    {
+        // handle data from a client
+        if (!readExact(childSocket, headerBuf, 5)) {
+            cerr << "[Client] : Disconnected or header read failed. \n";
+            break;
+        }
+        else
+        {
+            uint8_t msgType = static_cast<uint8_t>(headerBuf[0]);
+
+            uint32_t networkLen;
+            memcpy(&networkLen, &headerBuf[1], 4);
+            // network to host
+            uint32_t payloadLen = ntohl(networkLen);
+
+            if(payloadLen > 10 * 1024 * 1024) // if > 10 MB
+            {
+                cerr << "ERROR : Payload length exceeds 10MB. \n";
+                sendError(childSocket, 413, "Packet payload exceeds 10 MB.");
+                break;
+            }
+            else
+            {
+                vector<char> payloadBuf(payloadLen);
+                if(payloadLen > 0 && !readExact(childSocket, payloadBuf.data(), payloadLen)) {
+                    cerr << "ERROR : Failed to read full payload stream. \n";
+                    break;
+                }
+                else
+                {
+                    string payloadStr(payloadBuf.begin(), payloadBuf.end());
+
+                    switch (msgType) {
+                        case static_cast<uint8_t>(OpCode::HEARTBEAT): // HEARTBEAT (ping/pong)
+                        {
+                            std::cout << "[Client] : Received HEARTBEAT\n";
+                            break;
+                        }
+                        case static_cast<uint8_t>(OpCode::AUTH_REQ): // AUTH_REQ
+                        {
+                            std::cout << "[Client] : Received AUTH_REQ: " << payloadStr << "\n";
+                            break;
+                        }
+                        case static_cast<uint8_t>(OpCode::MOVE_CARD): // MOVE_CARD
+                        case static_cast<uint8_t>(OpCode::EDIT_CARD_CONTENT): // EDIT_CARD_CONTENT
+                        case static_cast<uint8_t>(OpCode::CREATE_CARD): // CREATE_CARD
+                        case static_cast<uint8_t>(OpCode::DELETE_CARD): // DELETE_CARD
+                        case static_cast<uint8_t>(OpCode::CREATE_CONNECTOR): // CREATE_CONNECTOR
+                        case static_cast<uint8_t>(OpCode::EDIT_CONNECTOR): // EDIT_CONNECTOR
+                        case static_cast<uint8_t>(OpCode::DELETE_CONNECTOR): // DELETE_CONNECTOR
+                        case static_cast<uint8_t>(OpCode::DELETE_OBJECTS):
+                        case static_cast<uint8_t>(OpCode::EDIT_BOARD_THEME):
+                        case static_cast<uint8_t>(OpCode::BRING_CARD_TO_FRONT):
+                        case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
+                        {
+                            std::cout << "[Client] : Received explicit DISCONNECT\n";
+                            return;
+                        }
+                        default:
+                        {
+                            std::cout << "ERROR : Unknown Opcode: 0x" << hex << (int)msgType << "\n";
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
   std::cout << "[DEBUG] Main started! argc = " << argc << "\n" << std::flush;
@@ -105,20 +136,8 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  /*
-  is the mast file descriptor list and the read file descriptor list needed for this client?
-  */
-  fd_set master;   // master file descriptor list
-  fd_set read_fds; // temp file descriptor list for select()
-  int fdmax;       // maximum file descriptor number
-
   struct sockaddr_in sin;
-  char buf[MAX_LINE];
-  int len;
   int s;
-
-  FD_ZERO(&master); // clear the master and temp sets
-  FD_ZERO(&read_fds);
 
   /* active open */
   if ((s = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -140,10 +159,9 @@ int main(int argc, char *argv[])
     close(s);
     exit(1);
   }
+  std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
 
-
-
-std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
+  std::thread receivingThread(clientReveivingLoop, (long)s);
 
     Settings user_settings;
     user_settings.loadFromFile("settings.json");
@@ -163,29 +181,32 @@ std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
     localBoard.boardID = 1;
     LocalBoardCommandHandler localCommandHandler(localBoard);
     
+    // Start receiving thread
+    try
+    {
+        std::thread receivingThread(clientReveivingLoop, (long)s);
+        receivingThread.detach();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[ERROR] :  Failed to create receiving thread.\n";
+        close(s);
+        return 1;
+    }
+
     // Main rendering loop
     while (!renderer.shouldClose()) {
+
         renderer.updateAndRender(localBoard, localCommandHandler);
-
-        //receive loop
-        uint8_t result = recv(s, buf, sizeof(buf), 0);
-        if (result < 0)
-        {
-            perror("recv");
-            break;
-        }
-        else if (result == 0)
-        {
-            std::cout << "[CLIENT] : Server closed the connection.\n";
-            break;
-        }
-        else
-        {
-            packetRead(s);
-        }
-
-
     }
+
+    // Wake the thread if it is blocked in recv(), then wait for it to finish.
+    shutdown(s, SHUT_RDWR);
+    if (receivingThread.joinable())
+    {
+      receivingThread.join();
+    }
+    close(s);
 
     if (!window) {
         return -1;
