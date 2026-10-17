@@ -1,6 +1,7 @@
 #include "BoardDatabase.h"
 #include "BoardStructs.h"
 
+#include <cmath>
 #include <iostream>
 #include <limits>
 
@@ -252,6 +253,14 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         card.y = static_cast<float>(sqlite3_column_double(statement, 2));
         card.width = static_cast<float>(sqlite3_column_double(statement, 3));
         card.height = static_cast<float>(sqlite3_column_double(statement, 4));
+        if (!std::isfinite(card.x) || !std::isfinite(card.y) ||
+            !std::isfinite(card.width) || !std::isfinite(card.height) ||
+            card.width < 20.0f || card.width > 1000.0f ||
+            card.height < 20.0f || card.height > 1000.0f) {
+            std::cerr << "[ERROR] : Board contains a card with invalid geometry.\n";
+            sqlite3_finalize(statement);
+            return false;
+        }
         card.text = readTextValue(statement, 6);
         card.mediaURL = readTextValue(statement, 7);
         card.color = readColorValues(statement, 8);
@@ -289,6 +298,11 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
             return false;
         }
         connector.thickness = static_cast<float>(sqlite3_column_double(statement, 3));
+        if (!std::isfinite(connector.thickness) || connector.thickness < 0.1f || connector.thickness > 1000.0f) {
+            std::cerr << "[ERROR] : Board contains a connector with invalid thickness.\n";
+            sqlite3_finalize(statement);
+            return false;
+        }
         connector.color = readColorValues(statement, 4);
         board.connectors[connector.connectorID] = connector;
     }

@@ -43,10 +43,9 @@ BoardDatabase boardDatabase;
 mutex stateMutex;
 mutex packetWriteMutex;
 
-bool handleSyncBoard(int clientSocket, const std::string& payloadStr, BoardState*& outBoard);
+bool handleSyncBoard(int clientSocket, const std::string& payloadStr);
 void handleBoardCommand(int clientSocket, OpCode opcode, const std::string& payloadStr);
 
-void broadcastUpdate(BoardState* board, int senderSocket, uint8_t msgType, const std::string& payloadStr, bool includeSender = false);
 void broadcastToClients(const std::vector<int>& clients, int senderSocket, uint8_t msgType, const std::string& payloadStr, bool includeSender);
 void cleanupClientSession(int clientSocket);
 bool readExact(int sock, char* buffer, size_t bytesToRead);
@@ -119,13 +118,7 @@ void ChildThread(long childSocket)
                         }
                         case static_cast<uint8_t>(OpCode::SYNC_BOARD): // SYNC_BOARD
                         {
-                            BoardState* targetBoard = nullptr;
-                            if(handleSyncBoard(childSocket, payloadStr, targetBoard))
-                            {
-                                json joinPayload = {{"childSocket", childSocket},
-                                {"boardID", targetBoard->boardID}};
-                                broadcastUpdate(targetBoard, childSocket, static_cast<uint8_t>(OpCode::CLIENT_CONNECTED), joinPayload.dump());
-                            }
+                            handleSyncBoard(childSocket, payloadStr);
                             break;
                         }
                         case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
@@ -315,16 +308,6 @@ BoardState* getBoardForSocketLocked(int clientSocket) {
     return &(boardIt->second);
 }
 
-// Sends a board update to its connected clients, optionally including the sender
-void broadcastUpdate(BoardState* board, int senderSocket, uint8_t msgType, const string& payloadStr, bool includeSender) {
-    if (!board)
-    {
-        return;
-    }
-
-    broadcastToClients(board->connectedClients, senderSocket, msgType, payloadStr, includeSender);
-}
-
 // Sends a packet to selected clients, optionally including the sender
 void broadcastToClients(const vector<int>& clients, int senderSocket, uint8_t msgType, const string& payloadStr, bool includeSender) {
     for (int clientSocket : clients) {
@@ -371,38 +354,44 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
 
 // Removes a client from its board, notifies the other clients, and closes its socket
 void cleanupClientSession(int clientSocket) {
-    lock_guard<mutex> lock(stateMutex);
+    vector<int> clients;
+    uint32_t boardID = 0;
 
-    auto boardIt = clientBoardMap.find(clientSocket);
-    if (boardIt != clientBoardMap.end()) {
-        uint32_t boardID = boardIt->second;
+    {
+        lock_guard<mutex> lock(stateMutex);
 
-        auto activeBoardIt = activeBoards.find(boardID);
-        if (activeBoardIt != activeBoards.end()) {
-            BoardState& board = activeBoardIt->second;
+        auto boardIt = clientBoardMap.find(clientSocket);
+        if (boardIt != clientBoardMap.end()) {
+            boardID = boardIt->second;
 
-            auto& clients = board.connectedClients;
-            clients.erase(remove(clients.begin(), clients.end(), clientSocket), clients.end());
+            auto activeBoardIt = activeBoards.find(boardID);
+            if (activeBoardIt != activeBoards.end()) {
+                BoardState& board = activeBoardIt->second;
 
-            // broadcast user left
-            nlohmann::json leavePayload = {
-                {"clientSocket", clientSocket},
-                {"boardID", boardID}
-            };
+                auto& connectedClients = board.connectedClients;
+                connectedClients.erase(remove(connectedClients.begin(), connectedClients.end(), clientSocket), connectedClients.end());
+                clients = connectedClients;
 
-            broadcastUpdate(&board, -1, static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED), leavePayload.dump());
+                std::cout << "[SERVER] : Client " << clientSocket << " removed from Board ID " << boardID << "\n";
+            }
 
-            std::cout << "[SERVER] : Client " << clientSocket << " removed from Board ID " << boardID << "\n";
+            clientBoardMap.erase(boardIt);
         }
-
-        clientBoardMap.erase(boardIt);
     }
 
     close(clientSocket);
+
+    if (boardID != 0) {
+        nlohmann::json leavePayload = {
+            {"clientSocket", clientSocket},
+            {"boardID", boardID}
+        };
+        broadcastToClients(clients, -1, static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED), leavePayload.dump(), false);
+    }
 }
 
 // Joins a client to a board and sends the current board snapshot
-bool handleSyncBoard(int clientSocket, const string& payloadStr, BoardState*& outBoard) {
+bool handleSyncBoard(int clientSocket, const string& payloadStr) {
     try {
         auto jsonParsed = json::parse(payloadStr);
         if (!jsonParsed.is_object()) {
@@ -416,46 +405,66 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr, BoardState*& ou
             return false;
         }
 
-        lock_guard<mutex> lockk(stateMutex);
+        vector<int> previousClients;
+        vector<int> currentClients;
+        uint32_t previousBoardID = 0;
+        bool switchedBoards = false;
 
-        auto activeBoard = activeBoards.find(boardID);
-        if (activeBoard == activeBoards.end()) {
-            BoardState loadedBoard;
-            bool boardFound = false;
-            if (!boardDatabase.loadBoard(boardID, loadedBoard, boardFound)) {
-                sendError(clientSocket, 500, "Could not load board from the database.");
+        {
+            lock_guard<mutex> lock(stateMutex);
+
+            auto activeBoard = activeBoards.find(boardID);
+            if (activeBoard == activeBoards.end()) {
+                BoardState loadedBoard;
+                bool boardFound = false;
+                if (!boardDatabase.loadBoard(boardID, loadedBoard, boardFound)) {
+                    sendError(clientSocket, 500, "Could not load board from the database.");
+                    return false;
+                }
+                if (!boardFound && !boardDatabase.saveBoard(loadedBoard)) {
+                    sendError(clientSocket, 500, "Could not create board in the database.");
+                    return false;
+                }
+                activeBoard = activeBoards.emplace(boardID, loadedBoard).first;
+            }
+
+            const string snapshot = ServerBoardCommandProcessor::boardSnapshotToJSON(activeBoard->second).dump();
+            if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::SYNC_BOARD), snapshot)) {
+                sendError(clientSocket, 500, "Failed to send board snapshot.");
                 return false;
             }
-            if (!boardFound && !boardDatabase.saveBoard(loadedBoard)) {
-                sendError(clientSocket, 500, "Could not create board in the database.");
-                return false;
+
+            const auto previousBoard = clientBoardMap.find(clientSocket);
+            if (previousBoard != clientBoardMap.end() && previousBoard->second != boardID) {
+                previousBoardID = previousBoard->second;
+                auto previous = activeBoards.find(previousBoardID);
+                if (previous != activeBoards.end()) {
+                    auto& connectedClients = previous->second.connectedClients;
+                    connectedClients.erase(remove(connectedClients.begin(), connectedClients.end(), clientSocket), connectedClients.end());
+                    previousClients = connectedClients;
+                    switchedBoards = true;
+                }
             }
-            activeBoard = activeBoards.emplace(boardID, loadedBoard).first;
-        }
 
-        const auto previousBoard = clientBoardMap.find(clientSocket);
-        if (previousBoard != clientBoardMap.end() && previousBoard->second != boardID) {
-            auto previous = activeBoards.find(previousBoard->second);
-            if (previous != activeBoards.end()) {
-                auto& previousClients = previous->second.connectedClients;
-                previousClients.erase(remove(previousClients.begin(), previousClients.end(), clientSocket), previousClients.end());
+            clientBoardMap[clientSocket] = boardID;
+
+            auto& connectedClients = activeBoard->second.connectedClients;
+            if (std::find(connectedClients.begin(), connectedClients.end(), clientSocket) == connectedClients.end()) {
+                connectedClients.push_back(clientSocket);
             }
+            currentClients = connectedClients;
         }
 
-        clientBoardMap[clientSocket] = boardID;
-
-        outBoard = &activeBoard->second;
-
-        auto& clients = outBoard->connectedClients;
-        if (std::find(clients.begin(), clients.end(), clientSocket) == clients.end()) {
-            clients.push_back(clientSocket);
+        if (switchedBoards) {
+            nlohmann::json leavePayload = {
+                {"clientSocket", clientSocket},
+                {"boardID", previousBoardID}
+            };
+            broadcastToClients(previousClients, -1, static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED), leavePayload.dump(), false);
         }
 
-        // SYNC_BOARD replies with a complete snapshot on the same opcode
-        if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::SYNC_BOARD), ServerBoardCommandProcessor::boardSnapshotToJSON(*outBoard).dump())) {
-            sendError(clientSocket, 500, "Failed to send board snapshot.");
-            return false;
-        }
+        nlohmann::json joinPayload = {{"childSocket", clientSocket}, {"boardID", boardID}};
+        broadcastToClients(currentClients, clientSocket, static_cast<uint8_t>(OpCode::CLIENT_CONNECTED), joinPayload.dump(), false);
 
         std::cout << "[SERVER] : Socket " << clientSocket << " successfully synced to Board ID " << boardID << "\n";
 

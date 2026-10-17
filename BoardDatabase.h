@@ -31,6 +31,7 @@ public:
 private:
     sqlite3* database = nullptr;
 
+    // Runs one SQL statement and reports any database error
     bool executeSQL(const char* sql);
     // Rolls back the current database transaction
     bool rollbackTransaction();
