@@ -11,5 +11,9 @@ imgui/backends/*.o
 
 settings.json
 imgui.ini
+opennote.db
+opennote.db-journal
+opennote.db-shm
+opennote.db-wal
 
 assets/*

@@ -10,6 +10,8 @@ CXXFLAGS = -g -std=c++20 -pthread -Wall -Wextra -Iimgui -Iimgui/backends -Ithird
 SERVER_LDFLAGS = -pthread
 CLIENT_LDFLAGS = -pthread
 
+SERVER_LDFLAGS += -lsqlite3
+
 ifeq ($(UNAME_S),Darwin)
     # Homebrew prefix differs between Intel (/usr/local) and Apple Silicon (/opt/homebrew)
     BREW_PREFIX := $(shell brew --prefix 2>/dev/null)
@@ -39,8 +41,8 @@ IMGUI_OBJS = $(IMGUI_SRCS:.cpp=.o)
 all: OpenNoteServer OpenNoteClient
 
 # Build the Server exe
-OpenNoteServer: OpenNoteServer.o ServerBoardCommandProcessor.o
-	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o ServerBoardCommandProcessor.o $(SERVER_LDFLAGS)
+OpenNoteServer: OpenNoteServer.o ServerBoardCommandProcessor.o BoardDatabase.o
+	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o ServerBoardCommandProcessor.o BoardDatabase.o $(SERVER_LDFLAGS)
 
 # Build the client exe (client, renderer, and ImGui)
 OpenNoteClient: OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o $(IMGUI_OBJS)
@@ -48,6 +50,7 @@ OpenNoteClient: OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCa
 
 OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o: BoardCommands.h BoardUIState.h BoardInspector.h ClientImageCache.h ClientRenderer.h LocalBoardCommandHandler.h
 OpenNoteServer.o ServerBoardCommandProcessor.o: ServerBoardCommandProcessor.h
+BoardDatabase.o: BoardDatabase.h
 
 %.o: %.cpp BoardStructs.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
