@@ -168,7 +168,21 @@ std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
         renderer.updateAndRender(localBoard, localCommandHandler);
 
         //receive loop
-
+        uint8_t result = recv(s, buf, sizeof(buf), 0);
+        if (result < 0)
+        {
+            perror("recv");
+            break;
+        }
+        else if (result == 0)
+        {
+            std::cout << "[CLIENT] : Server closed the connection.\n";
+            break;
+        }
+        else
+        {
+            packetRead(s);
+        }
 
 
     }
