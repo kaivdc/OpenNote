@@ -21,10 +21,81 @@ using json = nlohmann::json;
 #define SERVER_PORT 5432
 #define MAX_LINE 256
 #define STDIN 0
+#define VERSION "0.0.1"
 
 constexpr size_t HEADER_SIZE = 5; // 5 byte header: 1-byte msgType, 4-byte payloadLength
 constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB max payload
 
+// Read Packet -- Need to move later
+void packetRead(int sock)
+{
+  char header[5];
+  if (!readExact(sock, header, 5))
+  {
+    cerr << "Client disconnected or header read failed. \n";
+    return;
+  }
+  // Extract the message type and payload length from the header
+  uint8_t msgType = static_cast<uint8_t>(header[0]);
+  uint32_t networkLen;
+  memcpy(&networkLen, &header[1], 4);
+  // network to host
+  uint32_t payloadLen = ntohl(networkLen);
+  // Check for payload length exceeding maximum allowed size
+  if (payloadLen > MAX_PAYLOAD_SIZE)
+  {
+    cerr << "Payload length exceeds maximum allowed size.\n";
+    return;
+  }
+  else
+  {
+    vector<char> payloadBuffer(payloadLen);
+    if (!readExact(sock, payloadBuffer.data(), payloadLen))
+    {
+      cerr << "Client disconnected or payload read failed. \n";
+      return;
+    }
+    string payloadStr(payloadBuffer.begin(), payloadBuffer.end());
+    // Process the received packet based on msgType and payloadStr
+    switch (msgType) {
+      case static_cast<uint8_t>(OpCode::HEARTBEAT):
+        cout << "[DEBUG] : Received HEARTBEAT packet.\n";
+        break;
+      case static_cast<uint8_t>(OpCode::MOVE_CARD):
+        cout << "[DEBUG] : Received MOVE_CARD packet with payload: " << payloadStr << "\n";
+        break;
+      case static_cast<uint8_t>(OpCode::EDIT_CARD_CONTENT):
+        cout << "[DEBUG] : Received EDIT_CARD_CONTENT packet with payload: " << payloadStr << "\n";
+        break;
+      case static_cast<uint8_t>(OpCode::CREATE_CARD):
+        cout << "[DEBUG] : Received CREATE_CARD packet with payload: " << payloadStr << "\n";
+        break;
+      case static_cast<uint8_t>(OpCode::DELETE_CARD):
+        cout << "[DEBUG] : Received DELETE_CARD packet with payload: " << payloadStr << "\n";
+        break;
+      default:
+        cerr << "[ERROR] : Unknown message type received: " << static_cast<int>(msgType) << "\n";
+    }
+  }
+
+}
+
+// Reads the requested number of bytes, handling partial TCP reads
+bool readExact(int sock, char* buffer, size_t bytesToRead) {
+    size_t bytesRead = 0;
+    while (bytesRead < bytesToRead) {
+        ssize_t result = recv(sock, buffer + bytesRead, bytesToRead - bytesRead, 0);
+        if (result < 0 && errno == EINTR) {
+            continue;
+        }
+        if(result <= 0) {
+            // socket connection closed or erroring
+            return false;
+        }
+        bytesRead += result;
+    }
+    return true;
+}
 
 int main(int argc, char *argv[])
 {
@@ -70,6 +141,8 @@ int main(int argc, char *argv[])
     exit(1);
   }
 
+
+
 std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
 
     Settings user_settings;
@@ -93,6 +166,11 @@ std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
     // Main rendering loop
     while (!renderer.shouldClose()) {
         renderer.updateAndRender(localBoard, localCommandHandler);
+
+        //receive loop
+
+
+
     }
 
     if (!window) {
