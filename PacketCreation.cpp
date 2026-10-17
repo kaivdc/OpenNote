@@ -7,16 +7,12 @@ using namespace std;
 // Wraps an opcode and payload in a packet object
 json createPacket(OpCode opcode, const json& payload)
 {
-  json header;
-  header["OpCode"] = opcode;
-  header["PayloadLength"] = payload.size();
-  json packet;
-  packet["Header"] = header;
-  packet["Payload"] = payload;
-  return packet;
+  char header[5];
+  header[0] = static_cast<uint8_t>(opcode);
+  uint32_t payloadLength = htonl(static_cast<uint32_t>(payload.size()));
 }
 
-// Creates a heartbeat packet
+// Creates heartbeat json payload
 json heartBeatPacket()
 {
   json payload;
@@ -89,7 +85,7 @@ json createCardPacket(float x, float y, float width, float height, const string&
   payload["width"] = width;
   payload["height"] = height;
   payload["text"] = text;
-  payload["mediaURL"] = mediaURL;
+  payload["mediaUrl"] = mediaURL;
   return createPacket(OpCode::CREATE_CARD, payload);
 }
 

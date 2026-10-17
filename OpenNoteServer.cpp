@@ -234,7 +234,7 @@ int main(void)
     myaddr.sin_addr.s_addr = INADDR_ANY;
     myaddr.sin_port = htons(PORT);
     memset(&(myaddr.sin_zero), '\0', 8);
-    if (bind(listener, (struct sockaddr *)&myaddr, sizeof(myaddr)) == -1)
+    if (::bind(listener, (struct sockaddr *)&myaddr, sizeof(myaddr)) == -1)
     {
         perror("bind");
         exit(1);

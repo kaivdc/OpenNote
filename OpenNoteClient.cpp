@@ -9,7 +9,6 @@
 #include <netdb.h>
 #include <cstring>
 #include <cstdlib>
-#include <vector>
 #include <bit>
 #include "BoardStructs.h"
 #include "ClientRenderer.h"
@@ -17,7 +16,6 @@
 #include "ClientSettings.h"
 
 using namespace std;
-using buffer = vector<uint8_t>;
 using json = nlohmann::json;
 
 #define SERVER_PORT 5432

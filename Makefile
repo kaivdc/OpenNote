@@ -16,7 +16,7 @@ ifeq ($(UNAME_S),Darwin)
     # Homebrew prefix differs between Intel (/usr/local) and Apple Silicon (/opt/homebrew)
     BREW_PREFIX := $(shell brew --prefix 2>/dev/null)
     ifneq ($(BREW_PREFIX),)
-        CXXFLAGS       += -I$(BREW_PREFIX)/include -I$(BREW_PREFIX)/opt/openssl@3/include
+        CXXFLAGS       += -I$(BREW_PREFIX)/include -I$(BREW_PREFIX)/opt/openssl@3/include -I$(BREW_PREFIX)/opt/nlohmann-json/include
         SERVER_LDFLAGS += -L$(BREW_PREFIX)/opt/openssl@3/lib -lcrypto
         CLIENT_LDFLAGS += -L$(BREW_PREFIX)/lib -L$(BREW_PREFIX)/opt/openssl@3/lib -lcrypto
     endif
