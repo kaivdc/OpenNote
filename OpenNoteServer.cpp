@@ -23,6 +23,7 @@
 #include <nlohmann/json.hpp>
 
 #include "BoardStructs.h"
+#include "BoardDatabase.h"
 #include "ServerBoardCommandProcessor.h"
 
 using namespace std;
@@ -38,6 +39,7 @@ mutex masterMutex; // guards master/fdmax across threads
 
 unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
 unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a active boardID
+BoardDatabase boardDatabase;
 mutex stateMutex;
 mutex packetWriteMutex;
 
@@ -213,6 +215,11 @@ int main(void)
     int yes = 1;                   // for setsockopt() SO_REUSEADDR, below
     socklen_t addrlen;
 
+    if (!boardDatabase.open("opennote.db") || !boardDatabase.initialize()) {
+        cerr << "[ERROR] : Could not initialize the board database.\n";
+        return 1;
+    }
+
     FD_ZERO(&master); // clear the master and temp sets
 
     // get the listener
@@ -340,9 +347,15 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
         lock_guard<mutex> lock(stateMutex);
         BoardState* board = getBoardForSocketLocked(clientSocket);
         if (board) {
+            BoardState previousBoard = *board;
             result = ServerBoardCommandProcessor::process(*board, opcode, payloadStr, clientSocket);
             if (result.success) {
-                clients = board->connectedClients;
+                if (boardDatabase.saveBoard(*board)) {
+                    clients = board->connectedClients;
+                } else {
+                    *board = previousBoard;
+                    result = {false, 500, "Could not save board changes.", string{}};
+                }
             }
         }
     }
@@ -405,6 +418,21 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr, BoardState*& ou
 
         lock_guard<mutex> lockk(stateMutex);
 
+        auto activeBoard = activeBoards.find(boardID);
+        if (activeBoard == activeBoards.end()) {
+            BoardState loadedBoard;
+            bool boardFound = false;
+            if (!boardDatabase.loadBoard(boardID, loadedBoard, boardFound)) {
+                sendError(clientSocket, 500, "Could not load board from the database.");
+                return false;
+            }
+            if (!boardFound && !boardDatabase.saveBoard(loadedBoard)) {
+                sendError(clientSocket, 500, "Could not create board in the database.");
+                return false;
+            }
+            activeBoard = activeBoards.emplace(boardID, loadedBoard).first;
+        }
+
         const auto previousBoard = clientBoardMap.find(clientSocket);
         if (previousBoard != clientBoardMap.end() && previousBoard->second != boardID) {
             auto previous = activeBoards.find(previousBoard->second);
@@ -416,16 +444,7 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr, BoardState*& ou
 
         clientBoardMap[clientSocket] = boardID;
 
-        // Creat/load board in memory if does not exist
-        if (activeBoards.find(boardID) == activeBoards.end()) {
-
-            BoardState newBoard;
-            newBoard.boardID = boardID;
-            newBoard.theme = BoardTheme{};
-            activeBoards[boardID] = newBoard;
-        }
-
-        outBoard = &activeBoards[boardID];
+        outBoard = &activeBoard->second;
 
         auto& clients = outBoard->connectedClients;
         if (std::find(clients.begin(), clients.end(), clientSocket) == clients.end()) {
