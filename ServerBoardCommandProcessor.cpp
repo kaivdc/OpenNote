@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <vector>
 
 using nlohmann::json;
@@ -88,7 +87,7 @@ json connectorToJSON(const Connector& connector) {
 }
 
 // Creates a card and returns its assigned ID and state for broadcasting
-ServerBoardCommandResult createCard(BoardState& board, const json& jsonParsed, int clientSocket) {
+ServerBoardCommandResult createCard(BoardState& board, const json& jsonParsed) {
     if (!jsonParsed.is_object()) {
         return commandError(400, "CREATE_CARD payload must be a JSON object.");
     }
@@ -145,13 +144,11 @@ ServerBoardCommandResult createCard(BoardState& board, const json& jsonParsed, i
     }
     newCard->mediaURL = mediaURL;
 
-    std::cout << "[SERVER] : Created card ID " << newCard->cardID << " in Board " << board.boardID
-              << " by client " << clientSocket << "\n";
     return commandSuccess(cardToJSON(*newCard).dump());
 }
 
 // Deletes a card and all connectors attached to it
-ServerBoardCommandResult deleteCard(BoardState& board, const json& jsonParsed, int clientSocket) {
+ServerBoardCommandResult deleteCard(BoardState& board, const json& jsonParsed) {
     const uint32_t cardID = jsonParsed.value("cardID", 0u);
     if (cardID == 0) {
         return commandError(400, "Missing or invalid cardID for edit.");
@@ -161,13 +158,11 @@ ServerBoardCommandResult deleteCard(BoardState& board, const json& jsonParsed, i
     }
 
     board.deleteCard(cardID);
-    std::cout << "[SERVER] : Card " << cardID << " deleted from Board " << board.boardID
-              << " by client " << clientSocket << "\n";
     return commandSuccess(string{});
 }
 
 // Updates a card's geometry, text, image, or color and returns its updated state
-ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed, int clientSocket) {
+ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed) {
     if (!jsonParsed.is_object()) {
         return commandError(400, "Card edit payload must be a JSON object.");
     }
@@ -238,13 +233,11 @@ ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed, int
         updatedPayload["color"] = colorToJSON(board.cards.at(cardID).color);
     }
 
-    std::cout << "[SERVER] : Updated card " << cardID << "on Board" << board.boardID
-              << " by client " << clientSocket << "\n";
     return commandSuccess(updatedPayload.dump());
 }
 
 // Creates a connector between two cards and returns its assigned ID and state
-ServerBoardCommandResult createConnector(BoardState& board, const json& jsonParsed, int clientSocket) {
+ServerBoardCommandResult createConnector(BoardState& board, const json& jsonParsed) {
     const uint32_t sourceCardID = jsonParsed.value("sourceCardID", 0u);
     const uint32_t targetCardID = jsonParsed.value("targetCardID", 0u);
     if (sourceCardID == 0 || targetCardID == 0) {
@@ -266,13 +259,11 @@ ServerBoardCommandResult createConnector(BoardState& board, const json& jsonPars
         return commandError(400, "Connector endpoints must exist and may only be connected once.");
     }
 
-    std::cout << "[SERVER] : Created connector ID " << newConnector->connectorID << " in Board "
-              << board.boardID << " by client " << clientSocket << "\n";
     return commandSuccess(connectorToJSON(*newConnector).dump());
 }
 
 // Deletes a connector from the board
-ServerBoardCommandResult deleteConnector(BoardState& board, const json& jsonParsed, int clientSocket) {
+ServerBoardCommandResult deleteConnector(BoardState& board, const json& jsonParsed) {
     const uint32_t connectorID = jsonParsed.value("connectorID", 0u);
     if (connectorID == 0) {
         return commandError(400, "Missing or invalid connectorID for edit.");
@@ -282,13 +273,11 @@ ServerBoardCommandResult deleteConnector(BoardState& board, const json& jsonPars
     }
 
     board.connectors.erase(connectorID);
-    std::cout << "[SERVER] : Connector " << connectorID << " deleted from Board " << board.boardID
-              << " by client " << clientSocket << "\n";
     return commandSuccess(string{});
 }
 
 // Updates a connector's thickness or color
-ServerBoardCommandResult editConnector(BoardState& board, const json& jsonParsed, int clientSocket) {
+ServerBoardCommandResult editConnector(BoardState& board, const json& jsonParsed) {
     const uint32_t connectorID = jsonParsed.value("connectorID", 0u);
     if (connectorID == 0) {
         return commandError(400, "Missing or invalid connectorID for edit.");
@@ -323,8 +312,6 @@ ServerBoardCommandResult editConnector(BoardState& board, const json& jsonParsed
     }
 
     connectorIt->second = updatedConnector;
-    std::cout << "[SERVER] : Updated connector " << connectorID << "on Board" << board.boardID
-              << " by client " << clientSocket << "\n";
     return commandSuccess(string{});
 }
 
@@ -447,7 +434,7 @@ ServerBoardCommandResult ServerBoardCommandProcessor::process(
     BoardState& board,
     OpCode commandOpcode,
     const std::string& payloadStr,
-    int clientSocket) {
+    int) {
     json jsonParsed;
     try {
         jsonParsed = json::parse(payloadStr);
@@ -459,23 +446,23 @@ ServerBoardCommandResult ServerBoardCommandProcessor::process(
         ServerBoardCommandResult commandResult{false, 400, "Unsupported board command.", string{}};
         switch (commandOpcode) {
             case OpCode::CREATE_CARD:
-                commandResult = createCard(board, jsonParsed, clientSocket);
+                commandResult = createCard(board, jsonParsed);
                 break;
             case OpCode::MOVE_CARD:
             case OpCode::EDIT_CARD_CONTENT:
-                commandResult = editCard(board, jsonParsed, clientSocket);
+                commandResult = editCard(board, jsonParsed);
                 break;
             case OpCode::DELETE_CARD:
-                commandResult = deleteCard(board, jsonParsed, clientSocket);
+                commandResult = deleteCard(board, jsonParsed);
                 break;
             case OpCode::CREATE_CONNECTOR:
-                commandResult = createConnector(board, jsonParsed, clientSocket);
+                commandResult = createConnector(board, jsonParsed);
                 break;
             case OpCode::EDIT_CONNECTOR:
-                commandResult = editConnector(board, jsonParsed, clientSocket);
+                commandResult = editConnector(board, jsonParsed);
                 break;
             case OpCode::DELETE_CONNECTOR:
-                commandResult = deleteConnector(board, jsonParsed, clientSocket);
+                commandResult = deleteConnector(board, jsonParsed);
                 break;
             case OpCode::DELETE_OBJECTS:
                 commandResult = deleteObjects(board, jsonParsed);

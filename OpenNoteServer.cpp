@@ -1,4 +1,3 @@
-#include <iostream>
 #include <cerrno>
 #include <cmath>
 #include <limits>
@@ -8,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -25,6 +25,7 @@
 #include "BoardStructs.h"
 #include "BoardDatabase.h"
 #include "ServerBoardCommandProcessor.h"
+#include "ServerLogging.h"
 
 using namespace std;
 using json = nlohmann::json;
@@ -33,8 +34,9 @@ using json = nlohmann::json;
 #define MAX_LINE 256
 
 fd_set master; // master file descriptor list
-int listener;  // listening socket descriptor
+int listener = -1;  // listening socket descriptor
 int fdmax;
+volatile sig_atomic_t serverStopping = 0;
 mutex masterMutex; // guards master/fdmax across threads
 
 unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
@@ -47,11 +49,43 @@ bool handleSyncBoard(int clientSocket, const std::string& payloadStr);
 void handleBoardCommand(int clientSocket, OpCode opcode, const std::string& payloadStr);
 
 void broadcastToClients(const std::vector<int>& clients, int senderSocket, uint8_t msgType, const std::string& payloadStr, bool includeSender);
-void cleanupClientSession(int clientSocket);
+void cleanupClientSession(int clientSocket, const string& disconnectReason);
 bool readExact(int sock, char* buffer, size_t bytesToRead);
 bool sendPacket(int sock, uint8_t msgType, const std::string& payloadStr);
-void sendError(int sock, int errCode, const std::string& errorMsg);
+void sendError(int sock, int errCode, const std::string& errorMsg, const string& requestType);
 BoardState* getBoardForSocketLocked(int clientSocket);
+
+// Returns the name of a packet opcode for server log messages
+string opcodeName(uint8_t msgType) {
+    switch (static_cast<OpCode>(msgType)) {
+        case OpCode::HEARTBEAT: return "HEARTBEAT";
+        case OpCode::AUTH_REQ: return "AUTH_REQ";
+        case OpCode::MOVE_CARD: return "MOVE_CARD";
+        case OpCode::EDIT_CARD_CONTENT: return "EDIT_CARD_CONTENT";
+        case OpCode::CREATE_CARD: return "CREATE_CARD";
+        case OpCode::DELETE_CARD: return "DELETE_CARD";
+        case OpCode::CREATE_CONNECTOR: return "CREATE_CONNECTOR";
+        case OpCode::EDIT_CONNECTOR: return "EDIT_CONNECTOR";
+        case OpCode::DELETE_CONNECTOR: return "DELETE_CONNECTOR";
+        case OpCode::SYNC_BOARD: return "SYNC_BOARD";
+        case OpCode::DISCONNECT: return "DISCONNECT";
+        case OpCode::CLIENT_CONNECTED: return "CLIENT_CONNECTED";
+        case OpCode::CLIENT_DISCONNECTED: return "CLIENT_DISCONNECTED";
+        case OpCode::EDIT_BOARD_THEME: return "EDIT_BOARD_THEME";
+        case OpCode::DELETE_OBJECTS: return "DELETE_OBJECTS";
+        case OpCode::BRING_CARD_TO_FRONT: return "BRING_CARD_TO_FRONT";
+    }
+    return "UNKNOWN";
+}
+
+// Stops the server listener when the process receives a shutdown signal
+void stopServer(int signalNumber) {
+    (void)signalNumber;
+    serverStopping = 1;
+    if (listener >= 0) {
+        close(listener);
+    }
+}
 
 // Reads packets from one client and dispatches each request
 void ChildThread(long childSocket)
@@ -62,7 +96,7 @@ void ChildThread(long childSocket)
     {
         // handle data from a client
         if (!readExact(childSocket, headerBuf, 5)) {
-            cerr << "Client disconnected or header read failed. \n";
+            logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " event=connection_ended reason=header_read_failed");
             break;
         }
         else
@@ -76,15 +110,14 @@ void ChildThread(long childSocket)
 
             if(payloadLen > 10 * 1024 * 1024) // if > 10 MB
             {
-                cerr << "ERROR : Payload length exceeds 10MB. \n";
-                sendError(childSocket, 413, "Packet payload exceeds 10 MB.");
+                sendError(childSocket, 413, "Packet payload exceeds 10 MB.", opcodeName(msgType));
                 break;
             }
             else
             {
                 vector<char> payloadBuf(payloadLen);
                 if(payloadLen > 0 && !readExact(childSocket, payloadBuf.data(), payloadLen)) {
-                    cerr << "ERROR : Failed to read full payload stream. \n";
+                    logServerMessage("WARN", "clientSocket=" + to_string(childSocket) + " request=" + opcodeName(msgType) + " outcome=rejected reason=payload_read_failed");
                     break;
                 }
                 else
@@ -94,12 +127,12 @@ void ChildThread(long childSocket)
                     switch (msgType) {
                         case static_cast<uint8_t>(OpCode::HEARTBEAT): // HEARTBEAT (ping/pong)
                         {
-                            std::cout << "[SERVER] : Received HEARTBEAT\n";
+                            logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=HEARTBEAT outcome=received");
                             break;
                         }
                         case static_cast<uint8_t>(OpCode::AUTH_REQ): // AUTH_REQ
                         {
-                            std::cout << "[SERVER] : Received AUTH_REQ: " << payloadStr << "\n";
+                            logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=AUTH_REQ outcome=received");
                             break;
                         }
                         case static_cast<uint8_t>(OpCode::MOVE_CARD): // MOVE_CARD
@@ -123,13 +156,13 @@ void ChildThread(long childSocket)
                         }
                         case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
                         {
-                            std::cout << "[SERVER] : Received explicit DISCONNECT from: " << childSocket << "\n";
-                            cleanupClientSession(childSocket);
+                            logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=DISCONNECT outcome=received");
+                            cleanupClientSession(childSocket, "client_request");
                             return;
                         }
                         default:
                         {
-                            std::cout << "ERROR : Unknown Opcode: 0x" << hex << (int)msgType << "\n";
+                            logServerMessage("WARN", "clientSocket=" + to_string(childSocket) + " request=UNKNOWN opcode=" + to_string(msgType) + " outcome=rejected");
                             break;
                         }
                     }
@@ -137,7 +170,7 @@ void ChildThread(long childSocket)
             }
         }
     }
-    cleanupClientSession(childSocket);
+    cleanupClientSession(childSocket, "connection_closed");
 }
 
 
@@ -194,9 +227,14 @@ bool sendPacket(int sock, uint8_t msgType, const string& payloadStr) {
 }
 
 // Sends a JSON error response to one client
-void sendError(int sock, int errCode, const string& errorMsg) {
+void sendError(int sock, int errCode, const string& errorMsg, const string& requestType) {
+    const string level = errCode >= 500 ? "ERROR" : "WARN";
+    logServerMessage(level, "clientSocket=" + to_string(sock) + " request=" + requestType +
+                     " outcome=rejected errorCode=" + to_string(errCode) + " message=" + errorMsg);
     const string jsonPayload = json{{"errCode", errCode}, {"errorMsg", errorMsg}}.dump();
-    sendPacket(sock, 0xFF, jsonPayload);
+    if (!sendPacket(sock, 0xFF, jsonPayload)) {
+        logServerMessage("ERROR", "clientSocket=" + to_string(sock) + " request=" + requestType + " response=send_failed");
+    }
 }
 
 // Starts the server listener and accepts client connections
@@ -208,24 +246,30 @@ int main(void)
     int yes = 1;                   // for setsockopt() SO_REUSEADDR, below
     socklen_t addrlen;
 
+    if (!openServerLog()) {
+        logServerMessage("WARN", "Could not open opennote.log; writing server messages to the console only");
+    }
+    logServerMessage("INFO", "Server starting");
+
     if (!boardDatabase.open("opennote.db") || !boardDatabase.initialize()) {
-        cerr << "[ERROR] : Could not initialize the board database.\n";
+        logServerMessage("ERROR", "Could not initialize the board database");
         return 1;
     }
+    logServerMessage("INFO", "Board database ready");
 
     FD_ZERO(&master); // clear the master and temp sets
 
     // get the listener
     if ((listener = socket(AF_INET, SOCK_STREAM, 0)) == -1)
     {
-        perror("socket");
+        logServerMessage("ERROR", string("socket failed: ") + strerror(errno));
         exit(1);
     }
 
     // lose the pesky "address already in use" error message
     if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
     {
-        perror("setsockopt");
+        logServerMessage("ERROR", string("setsockopt failed: ") + strerror(errno));
         exit(1);
     }
 
@@ -236,14 +280,14 @@ int main(void)
     memset(&(myaddr.sin_zero), '\0', 8);
     if (::bind(listener, (struct sockaddr *)&myaddr, sizeof(myaddr)) == -1)
     {
-        perror("bind");
+        logServerMessage("ERROR", string("bind failed: ") + strerror(errno));
         exit(1);
     }
 
     // listen
     if (listen(listener, 10) == -1)
     {
-        perror("listen");
+        logServerMessage("ERROR", string("listen failed: ") + strerror(errno));
         exit(1);
     }
 
@@ -253,6 +297,10 @@ int main(void)
     // keep track of the biggest file descriptor
     fdmax = listener; // so far, it's this one
 
+    signal(SIGINT, stopServer);
+    signal(SIGTERM, stopServer);
+    logServerMessage("INFO", "Server listening address=0.0.0.0 port=" + to_string(PORT));
+
     addrlen = sizeof(remoteaddr);
 
     // main loop
@@ -261,8 +309,11 @@ int main(void)
         // handle new connections
         if ((newfd = accept(listener, (struct sockaddr *)&remoteaddr, &addrlen)) == -1)
         {
-            perror("accept");
-            exit(1);
+            if (serverStopping) {
+                break;
+            }
+            logServerMessage("ERROR", string("accept failed: ") + strerror(errno));
+            break;
         }
         else
         {
@@ -274,9 +325,7 @@ int main(void)
                     fdmax = newfd;
                 }
             }
-            std::cout << "multiThreadServer: new connection from "
-                 << inet_ntoa(remoteaddr.sin_addr)
-                 << " socket " << newfd << endl;
+            logServerMessage("INFO", "clientSocket=" + to_string(newfd) + " event=connected address=" + inet_ntoa(remoteaddr.sin_addr));
 
             try
             {
@@ -285,12 +334,20 @@ int main(void)
             }
             catch(const system_error &e)
             {
-                cerr << "thread creation failed: " << e.what() << endl;
-                exit(1);
+                logServerMessage("ERROR", string("Client thread creation failed: ") + e.what());
+                cleanupClientSession(newfd, "thread_creation_failed");
             }
         }
     }
-    return 0;
+    if (listener >= 0 && !serverStopping) {
+        close(listener);
+    }
+    listener = -1;
+    logServerMessage("INFO", "Server shutting down");
+    if (serverStopping) {
+        std::_Exit(0);
+    }
+    return 1;
 }
 
 // Returns the board assigned to a client while the state lock is held
@@ -315,7 +372,7 @@ void broadcastToClients(const vector<int>& clients, int senderSocket, uint8_t ms
             continue;
         }
         if (!sendPacket(clientSocket, msgType, payloadStr)) {
-            cerr << "[ERROR] : Failed to broadcast update to socket " << clientSocket << "\n";
+            logServerMessage("ERROR", "clientSocket=" + to_string(clientSocket) + " event=broadcast_failed");
         }
     }
 
@@ -325,11 +382,13 @@ void broadcastToClients(const vector<int>& clients, int senderSocket, uint8_t ms
 void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadStr) {
     ServerBoardCommandResult result{false, 403, "Client is not synced to an active board.", string{}};
     vector<int> clients;
+    uint32_t boardID = 0;
 
     {
         lock_guard<mutex> lock(stateMutex);
         BoardState* board = getBoardForSocketLocked(clientSocket);
         if (board) {
+            boardID = board->boardID;
             BoardState previousBoard = *board;
             result = ServerBoardCommandProcessor::process(*board, opcode, payloadStr, clientSocket);
             if (result.success) {
@@ -344,16 +403,18 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
     }
 
     if (!result.success) {
-        sendError(clientSocket, result.errorCode, result.errorMessage);
+        sendError(clientSocket, result.errorCode, result.errorMessage, opcodeName(static_cast<uint8_t>(opcode)));
         return;
     }
 
+    logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" + to_string(boardID) +
+                     " request=" + opcodeName(static_cast<uint8_t>(opcode)) + " outcome=success");
     const bool includeSender = opcode == OpCode::CREATE_CARD || opcode == OpCode::CREATE_CONNECTOR;
     broadcastToClients(clients, clientSocket, static_cast<uint8_t>(opcode), result.updatePayload, includeSender);
 }
 
 // Removes a client from its board, notifies the other clients, and closes its socket
-void cleanupClientSession(int clientSocket) {
+void cleanupClientSession(int clientSocket, const string& disconnectReason) {
     vector<int> clients;
     uint32_t boardID = 0;
 
@@ -372,7 +433,6 @@ void cleanupClientSession(int clientSocket) {
                 connectedClients.erase(remove(connectedClients.begin(), connectedClients.end(), clientSocket), connectedClients.end());
                 clients = connectedClients;
 
-                std::cout << "[SERVER] : Client " << clientSocket << " removed from Board ID " << boardID << "\n";
             }
 
             clientBoardMap.erase(boardIt);
@@ -380,6 +440,9 @@ void cleanupClientSession(int clientSocket) {
     }
 
     close(clientSocket);
+
+    logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " event=disconnected reason=" +
+                     disconnectReason + " boardID=" + to_string(boardID));
 
     if (boardID != 0) {
         nlohmann::json leavePayload = {
@@ -395,13 +458,13 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
     try {
         auto jsonParsed = json::parse(payloadStr);
         if (!jsonParsed.is_object()) {
-            sendError(clientSocket, 400, "SYNC_BOARD payload must be a JSON object.");
+            sendError(clientSocket, 400, "SYNC_BOARD payload must be a JSON object.", "SYNC_BOARD");
             return false;
         }
         uint32_t boardID = jsonParsed.value("boardID", 0);
 
         if (boardID == 0) {
-            sendError(clientSocket, 400, "Invalid board ID.");
+            sendError(clientSocket, 400, "Invalid board ID.", "SYNC_BOARD");
             return false;
         }
 
@@ -418,11 +481,11 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
                 BoardState loadedBoard;
                 bool boardFound = false;
                 if (!boardDatabase.loadBoard(boardID, loadedBoard, boardFound)) {
-                    sendError(clientSocket, 500, "Could not load board from the database.");
+                    sendError(clientSocket, 500, "Could not load board from the database.", "SYNC_BOARD");
                     return false;
                 }
                 if (!boardFound && !boardDatabase.saveBoard(loadedBoard)) {
-                    sendError(clientSocket, 500, "Could not create board in the database.");
+                    sendError(clientSocket, 500, "Could not create board in the database.", "SYNC_BOARD");
                     return false;
                 }
                 activeBoard = activeBoards.emplace(boardID, loadedBoard).first;
@@ -430,7 +493,7 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
 
             const string snapshot = ServerBoardCommandProcessor::boardSnapshotToJSON(activeBoard->second).dump();
             if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::SYNC_BOARD), snapshot)) {
-                sendError(clientSocket, 500, "Failed to send board snapshot.");
+                sendError(clientSocket, 500, "Failed to send board snapshot.", "SYNC_BOARD");
                 return false;
             }
 
@@ -466,10 +529,11 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
         nlohmann::json joinPayload = {{"childSocket", clientSocket}, {"boardID", boardID}};
         broadcastToClients(currentClients, clientSocket, static_cast<uint8_t>(OpCode::CLIENT_CONNECTED), joinPayload.dump(), false);
 
-        std::cout << "[SERVER] : Socket " << clientSocket << " successfully synced to Board ID " << boardID << "\n";
+        logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" + to_string(boardID) +
+                         " request=SYNC_BOARD outcome=success");
 
-    } catch (const exception& e) {
-        sendError(clientSocket, 400, "Malformed JSON in SYNC_BOARD.");
+    } catch (const exception&) {
+        sendError(clientSocket, 400, "Malformed JSON in SYNC_BOARD.", "SYNC_BOARD");
         return false;
     }
     return true;

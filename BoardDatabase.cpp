@@ -1,8 +1,8 @@
 #include "BoardDatabase.h"
 #include "BoardStructs.h"
+#include "ServerLogging.h"
 
 #include <cmath>
-#include <iostream>
 #include <limits>
 
 namespace {
@@ -10,7 +10,7 @@ namespace {
 // Prepares one SQL statement and reports any database error
 bool prepareStatement(sqlite3* database, const char* sql, sqlite3_stmt** statement) {
     if (sqlite3_prepare_v2(database, sql, -1, statement, nullptr) != SQLITE_OK) {
-        std::cerr << "[ERROR] : Database query failed: " << sqlite3_errmsg(database) << "\n";
+        logServerMessage("ERROR", std::string("Database query failed: ") + sqlite3_errmsg(database));
         return false;
     }
     return true;
@@ -57,7 +57,7 @@ bool readUint32Value(sqlite3_stmt* statement, int columnIndex, uint32_t& value) 
 // Runs one prepared statement and clears it for the next row
 bool runStatement(sqlite3* database, sqlite3_stmt* statement, const char* action) {
     if (sqlite3_step(statement) != SQLITE_DONE) {
-        std::cerr << "[ERROR] : " << action << ": " << sqlite3_errmsg(database) << "\n";
+        logServerMessage("ERROR", std::string(action) + ": " + sqlite3_errmsg(database));
         return false;
     }
     sqlite3_reset(statement);
@@ -80,13 +80,13 @@ BoardDatabase::~BoardDatabase() {
 // Opens the database file at the given path
 bool BoardDatabase::open(const std::string& databasePath) {
     if (database != nullptr) {
-        std::cerr << "[ERROR] : Database is already open.\n";
+        logServerMessage("ERROR", "Database is already open.");
         return false;
     }
 
     if (sqlite3_open(databasePath.c_str(), &database) != SQLITE_OK) {
-        std::cerr << "[ERROR] : Could not open database: "
-                  << (database != nullptr ? sqlite3_errmsg(database) : "Unknown error") << "\n";
+        logServerMessage("ERROR", std::string("Could not open database: ") +
+                         (database != nullptr ? sqlite3_errmsg(database) : "Unknown error"));
         if (database != nullptr) {
             sqlite3_close(database);
             database = nullptr;
@@ -99,7 +99,7 @@ bool BoardDatabase::open(const std::string& databasePath) {
 // Creates the tables used to store boards, cards, and connectors
 bool BoardDatabase::initialize() {
     if (database == nullptr) {
-        std::cerr << "[ERROR] : Database must be open before creating tables.\n";
+        logServerMessage("ERROR", "Database must be open before creating tables.");
         return false;
     }
 
@@ -179,7 +179,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
     board = BoardState{};
     board.boardID = boardID;
     if (database == nullptr || boardID == 0) {
-        std::cerr << "[ERROR] : Database must be open and boardID must be positive to load a board.\n";
+        logServerMessage("ERROR", "Database must be open and boardID must be positive to load a board.");
         return false;
     }
 
@@ -197,7 +197,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         return false;
     }
     if (sqlite3_bind_int64(statement, 1, boardID) != SQLITE_OK) {
-        std::cerr << "[ERROR] : Could not bind boardID while loading a board.\n";
+        logServerMessage("ERROR", "Could not bind boardID while loading a board.");
         sqlite3_finalize(statement);
         return false;
     }
@@ -208,14 +208,14 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         return true;
     }
     if (result != SQLITE_ROW) {
-        std::cerr << "[ERROR] : Could not load board: " << sqlite3_errmsg(database) << "\n";
+        logServerMessage("ERROR", std::string("Could not load board: ") + sqlite3_errmsg(database));
         sqlite3_finalize(statement);
         return false;
     }
 
     if (!readUint32Value(statement, 0, board.nextCardID) ||
         !readUint32Value(statement, 1, board.nextConnectorID)) {
-        std::cerr << "[ERROR] : Board has invalid saved ID values.\n";
+        logServerMessage("ERROR", "Board has invalid saved ID values.");
         sqlite3_finalize(statement);
         return false;
     }
@@ -236,7 +236,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         return false;
     }
     if (sqlite3_bind_int64(statement, 1, boardID) != SQLITE_OK) {
-        std::cerr << "[ERROR] : Could not bind boardID while loading cards.\n";
+        logServerMessage("ERROR", "Could not bind boardID while loading cards.");
         sqlite3_finalize(statement);
         return false;
     }
@@ -245,7 +245,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         Card card{};
         if (!readUint32Value(statement, 0, card.cardID) ||
             !readUint32Value(statement, 5, card.zIndex)) {
-            std::cerr << "[ERROR] : Board contains a card with an invalid ID.\n";
+            logServerMessage("ERROR", "Board contains a card with an invalid ID.");
             sqlite3_finalize(statement);
             return false;
         }
@@ -257,7 +257,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
             !std::isfinite(card.width) || !std::isfinite(card.height) ||
             card.width < 20.0f || card.width > 1000.0f ||
             card.height < 20.0f || card.height > 1000.0f) {
-            std::cerr << "[ERROR] : Board contains a card with invalid geometry.\n";
+            logServerMessage("ERROR", "Board contains a card with invalid geometry.");
             sqlite3_finalize(statement);
             return false;
         }
@@ -267,7 +267,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         board.cards[card.cardID] = card;
     }
     if (result != SQLITE_DONE) {
-        std::cerr << "[ERROR] : Could not load cards: " << sqlite3_errmsg(database) << "\n";
+        logServerMessage("ERROR", std::string("Could not load cards: ") + sqlite3_errmsg(database));
         sqlite3_finalize(statement);
         return false;
     }
@@ -283,7 +283,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         return false;
     }
     if (sqlite3_bind_int64(statement, 1, boardID) != SQLITE_OK) {
-        std::cerr << "[ERROR] : Could not bind boardID while loading connectors.\n";
+        logServerMessage("ERROR", "Could not bind boardID while loading connectors.");
         sqlite3_finalize(statement);
         return false;
     }
@@ -293,13 +293,13 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         if (!readUint32Value(statement, 0, connector.connectorID) ||
             !readUint32Value(statement, 1, connector.sourceCardID) ||
             !readUint32Value(statement, 2, connector.targetCardID)) {
-            std::cerr << "[ERROR] : Board contains a connector with an invalid ID.\n";
+            logServerMessage("ERROR", "Board contains a connector with an invalid ID.");
             sqlite3_finalize(statement);
             return false;
         }
         connector.thickness = static_cast<float>(sqlite3_column_double(statement, 3));
         if (!std::isfinite(connector.thickness) || connector.thickness < 0.1f || connector.thickness > 1000.0f) {
-            std::cerr << "[ERROR] : Board contains a connector with invalid thickness.\n";
+            logServerMessage("ERROR", "Board contains a connector with invalid thickness.");
             sqlite3_finalize(statement);
             return false;
         }
@@ -307,7 +307,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         board.connectors[connector.connectorID] = connector;
     }
     if (result != SQLITE_DONE) {
-        std::cerr << "[ERROR] : Could not load connectors: " << sqlite3_errmsg(database) << "\n";
+        logServerMessage("ERROR", std::string("Could not load connectors: ") + sqlite3_errmsg(database));
         sqlite3_finalize(statement);
         return false;
     }
@@ -319,7 +319,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
 // Saves one board and replaces its saved cards and connectors in one transaction
 bool BoardDatabase::saveBoard(const BoardState& board) {
     if (database == nullptr || !board.isValid()) {
-        std::cerr << "[ERROR] : Database must be open and board must be valid to save a board.\n";
+        logServerMessage("ERROR", "Database must be open and board must be valid to save a board.");
         return false;
     }
     if (!executeSQL("BEGIN TRANSACTION;")) {
@@ -334,7 +334,7 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
     if (sqlite3_bind_int64(statement, 1, board.boardID) != SQLITE_OK ||
         !runStatement(database, statement, "Could not create board record")) {
         if (sqlite3_errcode(database) == SQLITE_OK) {
-            std::cerr << "[ERROR] : Could not bind boardID while saving a board.\n";
+            logServerMessage("ERROR", "Could not bind boardID while saving a board.");
         }
         sqlite3_finalize(statement);
         rollbackTransaction();
@@ -367,7 +367,7 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
         sqlite3_bind_int64(statement, 23, board.boardID) == SQLITE_OK;
     if (!boardValuesBound || !runStatement(database, statement, "Could not save board theme and IDs")) {
         if (!boardValuesBound) {
-            std::cerr << "[ERROR] : Could not bind board data.\n";
+            logServerMessage("ERROR", "Could not bind board data.");
         }
         sqlite3_finalize(statement);
         rollbackTransaction();
@@ -428,7 +428,7 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
             bindColorValues(statement, 10, card.color);
         if (!cardValuesBound || !runStatement(database, statement, "Could not save card")) {
             if (!cardValuesBound) {
-                std::cerr << "[ERROR] : Could not bind card data.\n";
+                logServerMessage("ERROR", "Could not bind card data.");
             }
             sqlite3_finalize(statement);
             rollbackTransaction();
@@ -458,7 +458,7 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
             bindColorValues(statement, 6, connector.color);
         if (!connectorValuesBound || !runStatement(database, statement, "Could not save connector")) {
             if (!connectorValuesBound) {
-                std::cerr << "[ERROR] : Could not bind connector data.\n";
+                logServerMessage("ERROR", "Could not bind connector data.");
             }
             sqlite3_finalize(statement);
             rollbackTransaction();
@@ -479,8 +479,8 @@ bool BoardDatabase::rollbackTransaction() {
     char* errorMessage = nullptr;
     const int result = sqlite3_exec(database, "ROLLBACK;", nullptr, nullptr, &errorMessage);
     if (result != SQLITE_OK) {
-        std::cerr << "[ERROR] : Database rollback failed: "
-                  << (errorMessage != nullptr ? errorMessage : sqlite3_errmsg(database)) << "\n";
+        logServerMessage("ERROR", std::string("Database rollback failed: ") +
+                         (errorMessage != nullptr ? errorMessage : sqlite3_errmsg(database)));
         sqlite3_free(errorMessage);
         return false;
     }
@@ -493,8 +493,8 @@ bool BoardDatabase::executeSQL(const char* sql) {
     char* errorMessage = nullptr;
     const int result = sqlite3_exec(database, sql, nullptr, nullptr, &errorMessage);
     if (result != SQLITE_OK) {
-        std::cerr << "[ERROR] : Database operation failed: "
-                  << (errorMessage != nullptr ? errorMessage : sqlite3_errmsg(database)) << "\n";
+        logServerMessage("ERROR", std::string("Database operation failed: ") +
+                         (errorMessage != nullptr ? errorMessage : sqlite3_errmsg(database)));
         sqlite3_free(errorMessage);
         return false;
     }

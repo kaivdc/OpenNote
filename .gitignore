@@ -15,5 +15,6 @@ opennote.db
 opennote.db-journal
 opennote.db-shm
 opennote.db-wal
+opennote.log
 
 assets/*
