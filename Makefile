@@ -22,15 +22,15 @@ ifeq ($(UNAME_S),Darwin)
     endif
     # OpenGL is deprecated
     CXXFLAGS       += -DGL_SILENCE_DEPRECATION
-    CLIENT_LDFLAGS += -lGLEW -lglfw -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+    CLIENT_LDFLAGS += -lglfw -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
 else ifeq ($(UNAME_S),Linux)
     # Linux & WSL
     SERVER_LDFLAGS += -lcrypto
-    CLIENT_LDFLAGS += -lGLEW -lglfw -lGL -ldl -lcrypto
+    CLIENT_LDFLAGS += -lglfw -lGL -ldl -lcrypto
 # Default to linux make so we can expand if we choose to add windows while keeping linux defined above
 else
     SERVER_LDFLAGS += -lcrypto
-    CLIENT_LDFLAGS += -lGLEW -lglfw -lGL -ldl -lcrypto
+    CLIENT_LDFLAGS += -lglfw -lGL -ldl -lcrypto
 endif
 
 # ImGui source files

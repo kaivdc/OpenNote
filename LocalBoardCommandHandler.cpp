@@ -16,12 +16,15 @@ bool sendBoardCommand(int socket, OpCode opcode, const json& payload) {
 
 }
 
-// Connects the handler to the board it updates
-LocalBoardCommandHandler::LocalBoardCommandHandler(BoardState& board, int socket) : board(board), socket(socket) {}
+// Connects the handler to the server socket
+LocalBoardCommandHandler::LocalBoardCommandHandler(int socket) : socket(socket) {}
 
-// Applies a command locally or sends it to the server
+// Sends the requested board command to the server
 void LocalBoardCommandHandler::handle(const BoardCommand& command) {
-    if (!boardReady) return;
+    if (!boardReady && !std::holds_alternative<JoinBoardCommand>(command) &&
+        !std::holds_alternative<RefreshBoardListCommand>(command) &&
+        !std::holds_alternative<CreateBoardCommand>(command) &&
+        !std::holds_alternative<DeleteBoardCommand>(command)) return;
     std::visit([this](const auto& typedCommand) { apply(typedCommand); }, command);
 }
 
@@ -39,12 +42,11 @@ void LocalBoardCommandHandler::apply(const CreateCardCommand& command) {
     sendBoardCommand(socket, OpCode::CREATE_CARD, payload);
 }
 
-// Deletes a card from the local board
+// Sends a request to delete a card from the board
 void LocalBoardCommandHandler::apply(const DeleteCardCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
-    if (!sendBoardCommand(socket, OpCode::DELETE_CARD, payload)) return;
-    board.deleteCard(command.cardID);
+    sendBoardCommand(socket, OpCode::DELETE_CARD, payload);
 }
 
 // Sends a connector creation command so the server can assign its ID
@@ -55,15 +57,14 @@ void LocalBoardCommandHandler::apply(const CreateConnectorCommand& command) {
     sendBoardCommand(socket, OpCode::CREATE_CONNECTOR, payload);
 }
 
-// Deletes a connector from the local board
+// Sends a request to delete a connector from the board
 void LocalBoardCommandHandler::apply(const DeleteConnectorCommand& command) {
     json payload;
     payload["connectorID"] = command.connectorID;
-    if (!sendBoardCommand(socket, OpCode::DELETE_CONNECTOR, payload)) return;
-    board.deleteConnector(command.connectorID);
+    sendBoardCommand(socket, OpCode::DELETE_CONNECTOR, payload);
 }
 
-// Deletes the selected connectors and cards from the local board
+// Sends a request to delete the selected connectors and cards
 void LocalBoardCommandHandler::apply(const DeleteObjectsCommand& command) {
     json payload;
     payload["objects"] = json::array();
@@ -71,21 +72,10 @@ void LocalBoardCommandHandler::apply(const DeleteObjectsCommand& command) {
         const string objectType = object.kind == BoardObjectRef::Kind::Connector ? "connector" : "card";
         payload["objects"].push_back({{"type", objectType}, {"id", object.id}});
     }
-    if (!sendBoardCommand(socket, OpCode::DELETE_OBJECTS, payload)) return;
-
-    for (const BoardObjectRef& object : command.objects) {
-        if (object.kind == BoardObjectRef::Kind::Connector) {
-            board.deleteConnector(object.id);
-        }
-    }
-    for (const BoardObjectRef& object : command.objects) {
-        if (object.kind == BoardObjectRef::Kind::Card) {
-            board.deleteCard(object.id);
-        }
-    }
+    sendBoardCommand(socket, OpCode::DELETE_OBJECTS, payload);
 }
 
-// Updates a card's position and size on the local board
+// Sends a request to update a card's position and size
 void LocalBoardCommandHandler::apply(const SetCardGeometryCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
@@ -93,96 +83,50 @@ void LocalBoardCommandHandler::apply(const SetCardGeometryCommand& command) {
     payload["y"] = command.y;
     payload["width"] = command.width;
     payload["height"] = command.height;
-    if (!sendBoardCommand(socket, OpCode::MOVE_CARD, payload)) return;
-
-    auto it = board.cards.find(command.cardID);
-    if (it == board.cards.end()) return;
-    Card& card = it->second;
-    card.x = command.x;
-    card.y = command.y;
-    card.width = command.width;
-    card.height = command.height;
-    board.bringCardToFront(command.cardID);
+    sendBoardCommand(socket, OpCode::MOVE_CARD, payload);
 }
 
-// Updates a card's text on the local board
+// Sends a request to update a card's text
 void LocalBoardCommandHandler::apply(const SetCardTextCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
     payload["text"] = command.text;
-    if (!sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload)) return;
-
-    auto it = board.cards.find(command.cardID);
-    if (it == board.cards.end()) return;
-    it->second.text = command.text;
-    board.bringCardToFront(command.cardID);
+    sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload);
 }
 
-// Updates a card's image source on the local board
+// Sends a request to update a card's image source
 void LocalBoardCommandHandler::apply(const SetCardImageCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
     payload["mediaURL"] = command.imageSource;
-    if (!sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload)) return;
-
-    auto it = board.cards.find(command.cardID);
-    if (it == board.cards.end()) return;
-    it->second.mediaURL = command.imageSource;
-    board.bringCardToFront(command.cardID);
+    sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload);
 }
 
-// Updates a card's color on the local board
+// Sends a request to update a card's color
 void LocalBoardCommandHandler::apply(const SetCardColorCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
     payload["color"] = command.color;
-    if (!sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload)) return;
-
-    auto it = board.cards.find(command.cardID);
-    if (it == board.cards.end()) return;
-    it->second.color = command.color;
-    board.bringCardToFront(command.cardID);
+    sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload);
 }
 
-// Updates a connector's thickness on the local board
+// Sends a request to update a connector's thickness
 void LocalBoardCommandHandler::apply(const SetConnectorThicknessCommand& command) {
     json payload;
     payload["connectorID"] = command.connectorID;
     payload["thickness"] = command.thickness;
-    if (!sendBoardCommand(socket, OpCode::EDIT_CONNECTOR, payload)) return;
-
-    auto it = board.connectors.find(command.connectorID);
-    if (it != board.connectors.end()) {
-        it->second.thickness = command.thickness;
-    }
+    sendBoardCommand(socket, OpCode::EDIT_CONNECTOR, payload);
 }
 
-// Updates a connector's color on the local board
+// Sends a request to update a connector's color
 void LocalBoardCommandHandler::apply(const SetConnectorColorCommand& command) {
     json payload;
     payload["connectorID"] = command.connectorID;
     payload["color"] = command.color;
-    if (!sendBoardCommand(socket, OpCode::EDIT_CONNECTOR, payload)) return;
-
-    auto it = board.connectors.find(command.connectorID);
-    if (it != board.connectors.end()) {
-        it->second.color = command.color;
-    }
+    sendBoardCommand(socket, OpCode::EDIT_CONNECTOR, payload);
 }
 
-// Returns the theme color selected by the given field
-Color& LocalBoardCommandHandler::themeColor(BoardTheme& theme, BoardThemeField field) {
-    switch (field) {
-        case BoardThemeField::BoardBackground:   return theme.boardBackgroundColor;
-        case BoardThemeField::CardColor:         return theme.cardColor;
-        case BoardThemeField::ConnectorColor:    return theme.connectorColor;
-        case BoardThemeField::AccentColor:       return theme.accentColor;
-        case BoardThemeField::ImportantElements: return theme.importantElements;
-    }
-    return theme.boardBackgroundColor;
-}
-
-// Updates a board theme color on the local board
+// Sends a request to update a board theme color
 void LocalBoardCommandHandler::apply(const SetBoardThemeColorCommand& command) {
     string fieldName;
     switch (command.field) {
@@ -197,15 +141,49 @@ void LocalBoardCommandHandler::apply(const SetBoardThemeColorCommand& command) {
     json payload;
     payload["field"] = fieldName;
     payload["color"] = command.color;
-    if (!sendBoardCommand(socket, OpCode::EDIT_BOARD_THEME, payload)) return;
-
-    themeColor(board.theme, command.field) = command.color;
+    sendBoardCommand(socket, OpCode::EDIT_BOARD_THEME, payload);
 }
 
-// Moves a card to the front of the local board's draw order
+// Sends a request to move a card to the front of the draw order
 void LocalBoardCommandHandler::apply(const BringCardToFrontCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
-    if (!sendBoardCommand(socket, OpCode::BRING_CARD_TO_FRONT, payload)) return;
-    board.bringCardToFront(command.cardID);
+    sendBoardCommand(socket, OpCode::BRING_CARD_TO_FRONT, payload);
+}
+
+// Requests that the server save the active board
+void LocalBoardCommandHandler::apply(const SaveBoardCommand& command) {
+    json payload = json::object();
+    if (!command.boardName.empty()) {
+        payload["boardName"] = command.boardName;
+    }
+    sendBoardCommand(socket, OpCode::SAVE_BOARD, payload);
+}
+
+// Requests a board snapshot and waits for the server to load it
+void LocalBoardCommandHandler::apply(const JoinBoardCommand& command) {
+    json payload;
+    payload["boardID"] = command.boardID;
+    if (sendBoardCommand(socket, OpCode::SYNC_BOARD, payload)) {
+        boardReady = false;
+    }
+}
+
+// Requests the names, IDs, and dates for boards available on the server
+void LocalBoardCommandHandler::apply(const RefreshBoardListCommand&) {
+    sendBoardCommand(socket, OpCode::LIST_BOARDS, json::object());
+}
+
+// Requests a new board so the server can assign its ID
+void LocalBoardCommandHandler::apply(const CreateBoardCommand&) {
+    if (sendBoardCommand(socket, OpCode::CREATE_BOARD, json::object())) {
+        boardReady = false;
+    }
+}
+
+// Requests the server to delete one board
+void LocalBoardCommandHandler::apply(const DeleteBoardCommand& command) {
+    json payload;
+    payload["boardID"] = command.boardID;
+    sendBoardCommand(socket, OpCode::DELETE_BOARD, payload);
 }

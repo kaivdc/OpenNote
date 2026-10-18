@@ -3,7 +3,9 @@
 #include "ServerLogging.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <vector>
 
 namespace {
 
@@ -96,7 +98,7 @@ bool BoardDatabase::open(const std::string& databasePath) {
     return true;
 }
 
-// Creates the tables used to store boards, cards, and connectors
+// Creates or updates the tables used to store boards, cards, and connectors
 bool BoardDatabase::initialize() {
     if (database == nullptr) {
         logServerMessage("ERROR", "Database must be open before creating tables.");
@@ -107,9 +109,12 @@ bool BoardDatabase::initialize() {
         return false;
     }
 
-    return executeSQL(R"sql(
+    if (!executeSQL(R"sql(
         CREATE TABLE IF NOT EXISTS boards (
             board_id INTEGER PRIMARY KEY CHECK (board_id > 0),
+            board_name TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_edited_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             next_card_id INTEGER NOT NULL DEFAULT 1 CHECK (next_card_id > 0),
             next_connector_id INTEGER NOT NULL DEFAULT 1 CHECK (next_connector_id > 0),
             board_background_red INTEGER NOT NULL DEFAULT 30 CHECK (board_background_red BETWEEN 0 AND 255),
@@ -170,7 +175,277 @@ bool BoardDatabase::initialize() {
 
         CREATE UNIQUE INDEX IF NOT EXISTS unique_connector_pair
         ON connectors (board_id, min(source_card_id, target_card_id), max(source_card_id, target_card_id));
-    )sql");
+    )sql")) {
+        return false;
+    }
+
+    if (!executeSQL(R"sql(
+        CREATE TABLE IF NOT EXISTS board_id_sequence (
+            sequence_id INTEGER PRIMARY KEY CHECK (sequence_id = 1),
+            next_board_id INTEGER NOT NULL CHECK (next_board_id > 0)
+        );
+        INSERT OR IGNORE INTO board_id_sequence (sequence_id, next_board_id)
+        SELECT 1, COALESCE(MAX(board_id), 0) + 1 FROM boards;
+        UPDATE board_id_sequence
+        SET next_board_id = MAX(next_board_id, (SELECT COALESCE(MAX(board_id), 0) + 1 FROM boards))
+        WHERE sequence_id = 1;
+    )sql")) {
+        return false;
+    }
+
+    sqlite3_stmt* statement = nullptr;
+    if (!prepareStatement(database, "PRAGMA table_info(boards);", &statement)) {
+        return false;
+    }
+    bool boardNameColumnFound = false;
+    bool createdAtColumnFound = false;
+    bool lastEditedAtColumnFound = false;
+    int result = SQLITE_ROW;
+    while ((result = sqlite3_step(statement)) == SQLITE_ROW) {
+        const unsigned char* columnName = sqlite3_column_text(statement, 1);
+        if (columnName != nullptr) {
+            const std::string columnNameText(reinterpret_cast<const char*>(columnName));
+            if (columnNameText == "board_name") boardNameColumnFound = true;
+            if (columnNameText == "created_at") createdAtColumnFound = true;
+            if (columnNameText == "last_edited_at") lastEditedAtColumnFound = true;
+        }
+    }
+    sqlite3_finalize(statement);
+    if (result != SQLITE_DONE) {
+        logServerMessage("ERROR", std::string("Could not check board table columns: ") + sqlite3_errmsg(database));
+        return false;
+    }
+    if (!boardNameColumnFound && !executeSQL("ALTER TABLE boards ADD COLUMN board_name TEXT NOT NULL DEFAULT '';")) {
+        return false;
+    }
+    if (!createdAtColumnFound && !executeSQL("ALTER TABLE boards ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")) {
+        return false;
+    }
+    if (!lastEditedAtColumnFound && !executeSQL("ALTER TABLE boards ADD COLUMN last_edited_at TEXT NOT NULL DEFAULT '';")) {
+        return false;
+    }
+    if (!executeSQL("UPDATE boards SET created_at = CURRENT_TIMESTAMP WHERE created_at = '';")) {
+        return false;
+    }
+    if (!executeSQL("UPDATE boards SET last_edited_at = created_at WHERE last_edited_at = '';")) {
+        return false;
+    }
+
+    if (!assignDefaultBoardNames()) {
+        return false;
+    }
+    return executeSQL("CREATE UNIQUE INDEX IF NOT EXISTS unique_board_name ON boards(board_name) WHERE board_name <> ''; ");
+}
+
+// Reserves the next board ID without reusing deleted IDs
+bool BoardDatabase::getNextBoardID(uint32_t& boardID) {
+    if (database == nullptr) {
+        logServerMessage("ERROR", "Database must be open before reserving a board ID.");
+        return false;
+    }
+    if (!executeSQL("BEGIN TRANSACTION;")) {
+        return false;
+    }
+
+    sqlite3_stmt* statement = nullptr;
+    if (!prepareStatement(database,
+            "SELECT next_board_id FROM board_id_sequence WHERE sequence_id = 1;", &statement)) {
+        rollbackTransaction();
+        return false;
+    }
+
+    const int result = sqlite3_step(statement);
+    if (result != SQLITE_ROW) {
+        logServerMessage("ERROR", "Could not read the next board ID.");
+        sqlite3_finalize(statement);
+        rollbackTransaction();
+        return false;
+    }
+
+    const sqlite3_int64 nextBoardID = sqlite3_column_int64(statement, 0);
+    sqlite3_finalize(statement);
+    if (nextBoardID <= 0 || nextBoardID > std::numeric_limits<uint32_t>::max()) {
+        logServerMessage("ERROR", "No board IDs are available.");
+        rollbackTransaction();
+        return false;
+    }
+
+    if (!prepareStatement(database,
+            "UPDATE board_id_sequence SET next_board_id = ? WHERE sequence_id = 1;", &statement)) {
+        rollbackTransaction();
+        return false;
+    }
+    const bool nextIDBound = sqlite3_bind_int64(statement, 1, nextBoardID + 1) == SQLITE_OK;
+    if (!nextIDBound || !runStatement(database, statement, "Could not reserve the next board ID")) {
+        sqlite3_finalize(statement);
+        rollbackTransaction();
+        return false;
+    }
+    sqlite3_finalize(statement);
+
+    if (!executeSQL("COMMIT;")) {
+        rollbackTransaction();
+        return false;
+    }
+
+    boardID = static_cast<uint32_t>(nextBoardID);
+    return true;
+}
+
+// Loads saved board names, IDs, and dates into an ordered map
+bool BoardDatabase::listBoards(BoardList& boardList) {
+    boardList.clear();
+    if (database == nullptr) {
+        logServerMessage("ERROR", "Database must be open before listing boards.");
+        return false;
+    }
+
+    sqlite3_stmt* statement = nullptr;
+    if (!prepareStatement(database,
+            "SELECT board_name, board_id, created_at, last_edited_at, "
+            "board_background_red, board_background_green, board_background_blue, board_background_alpha, "
+            "card_red, card_green, card_blue, card_alpha, "
+            "connector_red, connector_green, connector_blue, connector_alpha, "
+            "accent_red, accent_green, accent_blue, accent_alpha, "
+            "important_elements_red, important_elements_green, important_elements_blue, important_elements_alpha "
+            "FROM boards WHERE board_name <> '' ORDER BY board_name;",
+            &statement)) {
+        return false;
+    }
+
+    int result = SQLITE_ROW;
+    while ((result = sqlite3_step(statement)) == SQLITE_ROW) {
+        const std::string boardName = readTextValue(statement, 0);
+        BoardInfo boardInfo;
+        if (boardName.empty() || !readUint32Value(statement, 1, boardInfo.boardID)) {
+            logServerMessage("ERROR", "Board database contains an invalid board name or ID.");
+            sqlite3_finalize(statement);
+            return false;
+        }
+        boardInfo.createdAt = readTextValue(statement, 2);
+        boardInfo.lastEditedAt = readTextValue(statement, 3);
+        boardInfo.theme.boardBackgroundColor = readColorValues(statement, 4);
+        boardInfo.theme.cardColor = readColorValues(statement, 8);
+        boardInfo.theme.connectorColor = readColorValues(statement, 12);
+        boardInfo.theme.accentColor = readColorValues(statement, 16);
+        boardInfo.theme.importantElements = readColorValues(statement, 20);
+        if (!boardList.emplace(boardName, boardInfo).second) {
+            logServerMessage("ERROR", "Board database contains duplicate board names.");
+            sqlite3_finalize(statement);
+            return false;
+        }
+    }
+
+    if (result != SQLITE_DONE) {
+        logServerMessage("ERROR", std::string("Could not list boards: ") + sqlite3_errmsg(database));
+        sqlite3_finalize(statement);
+        return false;
+    }
+    sqlite3_finalize(statement);
+    return true;
+}
+
+// Deletes one saved board and its cards and connectors
+bool BoardDatabase::deleteBoard(uint32_t boardID) {
+    if (database == nullptr || boardID == 0) {
+        logServerMessage("ERROR", "Database must be open and boardID must be positive to delete a board.");
+        return false;
+    }
+
+    sqlite3_stmt* statement = nullptr;
+    if (!prepareStatement(database, "DELETE FROM boards WHERE board_id = ?;", &statement)) {
+        return false;
+    }
+    if (sqlite3_bind_int64(statement, 1, boardID) != SQLITE_OK ||
+        !runStatement(database, statement, "Could not delete board")) {
+        sqlite3_finalize(statement);
+        return false;
+    }
+
+    const bool boardDeleted = sqlite3_changes(database) > 0;
+    sqlite3_finalize(statement);
+    return boardDeleted;
+}
+
+// Finds the next sequential default board name
+std::string BoardDatabase::nextDefaultBoardName(const BoardList& boardList) const {
+    uint32_t highestBoardNumber = 0;
+    for (const auto& entry : boardList) {
+        const std::string& boardName = entry.first;
+        if (boardName.compare(0, 6, "Board ") != 0) {
+            continue;
+        }
+
+        const std::string numberText = boardName.substr(6);
+        char* numberEnd = nullptr;
+        const unsigned long parsedNumber = std::strtoul(numberText.c_str(), &numberEnd, 10);
+        if (numberEnd != numberText.c_str() && *numberEnd == '\0' &&
+            std::to_string(parsedNumber) == numberText &&
+            parsedNumber <= std::numeric_limits<uint32_t>::max() &&
+            parsedNumber > highestBoardNumber) {
+            highestBoardNumber = static_cast<uint32_t>(parsedNumber);
+        }
+    }
+
+    if (highestBoardNumber == std::numeric_limits<uint32_t>::max()) {
+        return std::string{};
+    }
+    return "Board " + std::to_string(highestBoardNumber + 1);
+}
+
+// Assigns sequential names to saved boards that do not have one
+bool BoardDatabase::assignDefaultBoardNames() {
+    sqlite3_stmt* statement = nullptr;
+    if (!prepareStatement(database, "SELECT board_id FROM boards WHERE board_name = '' ORDER BY board_id;", &statement)) {
+        return false;
+    }
+
+    std::vector<uint32_t> unnamedBoardIDs;
+    int result = SQLITE_ROW;
+    while ((result = sqlite3_step(statement)) == SQLITE_ROW) {
+        uint32_t boardID = 0;
+        if (!readUint32Value(statement, 0, boardID)) {
+            logServerMessage("ERROR", "Board database contains an invalid board ID.");
+            sqlite3_finalize(statement);
+            return false;
+        }
+        unnamedBoardIDs.push_back(boardID);
+    }
+    sqlite3_finalize(statement);
+    if (result != SQLITE_DONE) {
+        logServerMessage("ERROR", std::string("Could not find boards without names: ") + sqlite3_errmsg(database));
+        return false;
+    }
+
+    BoardList boardList;
+    if (!listBoards(boardList)) {
+        return false;
+    }
+    if (unnamedBoardIDs.empty()) {
+        return true;
+    }
+
+    if (!prepareStatement(database, "UPDATE boards SET board_name = ? WHERE board_id = ?;", &statement)) {
+        return false;
+    }
+    for (uint32_t boardID : unnamedBoardIDs) {
+        const std::string boardName = nextDefaultBoardName(boardList);
+        if (boardName.empty()) {
+            sqlite3_finalize(statement);
+            return false;
+        }
+        if (sqlite3_bind_text(statement, 1, boardName.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+            sqlite3_bind_int64(statement, 2, boardID) != SQLITE_OK ||
+            !runStatement(database, statement, "Could not assign a default board name")) {
+            sqlite3_finalize(statement);
+            return false;
+        }
+        BoardInfo boardInfo;
+        boardInfo.boardID = boardID;
+        boardList[boardName] = boardInfo;
+    }
+    sqlite3_finalize(statement);
+    return true;
 }
 
 // Loads one board and its saved cards and connectors
@@ -184,7 +459,7 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
     }
 
     const char* boardSQL = R"sql(
-        SELECT next_card_id, next_connector_id,
+        SELECT board_name, created_at, last_edited_at, next_card_id, next_connector_id,
                board_background_red, board_background_green, board_background_blue, board_background_alpha,
                card_red, card_green, card_blue, card_alpha,
                connector_red, connector_green, connector_blue, connector_alpha,
@@ -213,17 +488,20 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
         return false;
     }
 
-    if (!readUint32Value(statement, 0, board.nextCardID) ||
-        !readUint32Value(statement, 1, board.nextConnectorID)) {
+    board.boardName = readTextValue(statement, 0);
+    board.createdAt = readTextValue(statement, 1);
+    board.lastEditedAt = readTextValue(statement, 2);
+    if (!readUint32Value(statement, 3, board.nextCardID) ||
+        !readUint32Value(statement, 4, board.nextConnectorID)) {
         logServerMessage("ERROR", "Board has invalid saved ID values.");
         sqlite3_finalize(statement);
         return false;
     }
-    board.theme.boardBackgroundColor = readColorValues(statement, 2);
-    board.theme.cardColor = readColorValues(statement, 6);
-    board.theme.connectorColor = readColorValues(statement, 10);
-    board.theme.accentColor = readColorValues(statement, 14);
-    board.theme.importantElements = readColorValues(statement, 18);
+    board.theme.boardBackgroundColor = readColorValues(statement, 5);
+    board.theme.cardColor = readColorValues(statement, 9);
+    board.theme.connectorColor = readColorValues(statement, 13);
+    board.theme.accentColor = readColorValues(statement, 17);
+    board.theme.importantElements = readColorValues(statement, 21);
     sqlite3_finalize(statement);
 
     const char* cardSQL = R"sql(
@@ -316,8 +594,8 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
     return true;
 }
 
-// Saves one board and replaces its saved cards and connectors in one transaction
-bool BoardDatabase::saveBoard(const BoardState& board) {
+// Saves a board and its cards and connectors in one transaction, assigning a default name when needed
+bool BoardDatabase::saveBoard(BoardState& board, bool updateEditDate) {
     if (database == nullptr || !board.isValid()) {
         logServerMessage("ERROR", "Database must be open and board must be valid to save a board.");
         return false;
@@ -326,12 +604,29 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
         return false;
     }
 
+    std::string boardName = board.boardName;
+    if (boardName.empty()) {
+        BoardList boardList;
+        if (!listBoards(boardList)) {
+            rollbackTransaction();
+            return false;
+        }
+        boardName = nextDefaultBoardName(boardList);
+        if (boardName.empty()) {
+            rollbackTransaction();
+            return false;
+        }
+    }
+
     sqlite3_stmt* statement = nullptr;
-    if (!prepareStatement(database, "INSERT OR IGNORE INTO boards (board_id) VALUES (?);", &statement)) {
+    if (!prepareStatement(database,
+            "INSERT OR IGNORE INTO boards (board_id, board_name, created_at, last_edited_at) "
+            "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);", &statement)) {
         rollbackTransaction();
         return false;
     }
     if (sqlite3_bind_int64(statement, 1, board.boardID) != SQLITE_OK ||
+        sqlite3_bind_text(statement, 2, boardName.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
         !runStatement(database, statement, "Could not create board record")) {
         if (sqlite3_errcode(database) == SQLITE_OK) {
             logServerMessage("ERROR", "Could not bind boardID while saving a board.");
@@ -342,8 +637,28 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
     }
     sqlite3_finalize(statement);
 
+    if (!prepareStatement(database,
+            "UPDATE board_id_sequence SET next_board_id = CASE "
+            "WHEN next_board_id <= ? THEN ? + 1 ELSE next_board_id END "
+            "WHERE sequence_id = 1;", &statement)) {
+        rollbackTransaction();
+        return false;
+    }
+    const sqlite3_int64 savedBoardID = static_cast<sqlite3_int64>(board.boardID);
+    const bool sequenceValuesBound =
+        sqlite3_bind_int64(statement, 1, savedBoardID) == SQLITE_OK &&
+        sqlite3_bind_int64(statement, 2, savedBoardID) == SQLITE_OK;
+    if (!sequenceValuesBound || !runStatement(database, statement, "Could not update the next board ID")) {
+        sqlite3_finalize(statement);
+        rollbackTransaction();
+        return false;
+    }
+    sqlite3_finalize(statement);
+
     const char* updateBoardSQL = R"sql(
-        UPDATE boards SET next_card_id = ?, next_connector_id = ?,
+        UPDATE boards SET board_name = ?,
+            last_edited_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE last_edited_at END,
+            next_card_id = ?, next_connector_id = ?,
             board_background_red = ?, board_background_green = ?, board_background_blue = ?, board_background_alpha = ?,
             card_red = ?, card_green = ?, card_blue = ?, card_alpha = ?,
             connector_red = ?, connector_green = ?, connector_blue = ?, connector_alpha = ?,
@@ -357,14 +672,16 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
         return false;
     }
     const bool boardValuesBound =
-        sqlite3_bind_int64(statement, 1, board.nextCardID) == SQLITE_OK &&
-        sqlite3_bind_int64(statement, 2, board.nextConnectorID) == SQLITE_OK &&
-        bindColorValues(statement, 3, board.theme.boardBackgroundColor) &&
-        bindColorValues(statement, 7, board.theme.cardColor) &&
-        bindColorValues(statement, 11, board.theme.connectorColor) &&
-        bindColorValues(statement, 15, board.theme.accentColor) &&
-        bindColorValues(statement, 19, board.theme.importantElements) &&
-        sqlite3_bind_int64(statement, 23, board.boardID) == SQLITE_OK;
+        sqlite3_bind_text(statement, 1, boardName.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_int(statement, 2, updateEditDate ? 1 : 0) == SQLITE_OK &&
+        sqlite3_bind_int64(statement, 3, board.nextCardID) == SQLITE_OK &&
+        sqlite3_bind_int64(statement, 4, board.nextConnectorID) == SQLITE_OK &&
+        bindColorValues(statement, 5, board.theme.boardBackgroundColor) &&
+        bindColorValues(statement, 9, board.theme.cardColor) &&
+        bindColorValues(statement, 13, board.theme.connectorColor) &&
+        bindColorValues(statement, 17, board.theme.accentColor) &&
+        bindColorValues(statement, 21, board.theme.importantElements) &&
+        sqlite3_bind_int64(statement, 25, board.boardID) == SQLITE_OK;
     if (!boardValuesBound || !runStatement(database, statement, "Could not save board theme and IDs")) {
         if (!boardValuesBound) {
             logServerMessage("ERROR", "Could not bind board data.");
@@ -467,10 +784,28 @@ bool BoardDatabase::saveBoard(const BoardState& board) {
     }
     sqlite3_finalize(statement);
 
+    if (!prepareStatement(database,
+            "SELECT created_at, last_edited_at FROM boards WHERE board_id = ?;", &statement)) {
+        rollbackTransaction();
+        return false;
+    }
+    if (sqlite3_bind_int64(statement, 1, board.boardID) != SQLITE_OK || sqlite3_step(statement) != SQLITE_ROW) {
+        logServerMessage("ERROR", std::string("Could not read saved board dates: ") + sqlite3_errmsg(database));
+        sqlite3_finalize(statement);
+        rollbackTransaction();
+        return false;
+    }
+    const std::string createdAt = readTextValue(statement, 0);
+    const std::string lastEditedAt = readTextValue(statement, 1);
+    sqlite3_finalize(statement);
+
     if (!executeSQL("COMMIT;")) {
         rollbackTransaction();
         return false;
     }
+    board.boardName = boardName;
+    board.createdAt = createdAt;
+    board.lastEditedAt = lastEditedAt;
     return true;
 }
 

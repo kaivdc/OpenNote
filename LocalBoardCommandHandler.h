@@ -5,12 +5,11 @@
 
 class LocalBoardCommandHandler final : public BoardCommandHandler {
 public:
-    explicit LocalBoardCommandHandler(BoardState& board, int socket);
+    explicit LocalBoardCommandHandler(int socket);
     void handle(const BoardCommand& command) override;
     void setBoardReady(bool ready);
 
 private:
-    BoardState& board;
     int socket;
     bool boardReady = true;
 
@@ -27,8 +26,11 @@ private:
     void apply(const SetConnectorColorCommand& command);
     void apply(const SetBoardThemeColorCommand& command);
     void apply(const BringCardToFrontCommand& command);
-
-    static Color& themeColor(BoardTheme& theme, BoardThemeField field);
+    void apply(const SaveBoardCommand& command);
+    void apply(const JoinBoardCommand& command);
+    void apply(const RefreshBoardListCommand& command);
+    void apply(const CreateBoardCommand& command);
+    void apply(const DeleteBoardCommand& command);
 };
 
 #endif

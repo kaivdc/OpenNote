@@ -14,18 +14,6 @@ void heartBeatPacket(int sock)
   sendPacket(sock, static_cast<uint8_t>(OpCode::HEARTBEAT), jsonPayload);
 }
 
-// Creates an authentication request with the client and board details
-void AuthRequestPacket(int sock, const string version, const uint32_t boardID, const string authToken)
-{
-  json payload;
-  payload["version"] = version;
-  payload["boardID"] = boardID;
-  payload["authToken"] = authToken;
-  const string jsonPayload = payload.dump();
-  sendPacket(sock, static_cast<uint8_t>(OpCode::AUTH_REQ), jsonPayload);
-  //return sendPacket(sock, static_cast<uint8_t>(OpCode::AUTH_REQ), jsonPayload);
-}
-
 // Creates a card movement packet with its position and size
 void moveCardPacket(int sock, uint32_t cardID, float x, float y, float width, float height)
 {
@@ -142,7 +130,8 @@ bool sendPacket(int sock, uint8_t msgType, const string& payloadStr) {
            (payloadStr.empty() || sendAll(sock, payloadStr.data(), payloadStr.size()));
 }
 
+// Sends an error packet through the client connection
 void sendError(int sock, int errCode, const string& errorMsg) {
     const string jsonPayload = json{{"errCode", errCode}, {"errorMsg", errorMsg}}.dump();
-    sendPacket(sock, 0xFF, jsonPayload);
+    sendPacket(sock, static_cast<uint8_t>(OpCode::ERROR), jsonPayload);
 }

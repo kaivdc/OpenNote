@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <unordered_map>
 #include <vector>
+#include <map>
 #include <cstdint>
+#include <cstddef>
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <iostream>
@@ -13,10 +15,12 @@
 
 using namespace std;
 
+constexpr std::size_t MAX_BOARD_NAME_LENGTH = 64;
+
 enum class OpCode : uint8_t 
 {
 HEARTBEAT = 0x00,
-AUTH_REQ = 0x01,
+ERROR = 0xFF,
 MOVE_CARD = 0x02,
 EDIT_CARD_CONTENT = 0x03,
 CREATE_CARD = 0x04,
@@ -30,7 +34,13 @@ CLIENT_DISCONNECTED = 0x0B,
 CLIENT_CONNECTED = 0x0A,
 EDIT_BOARD_THEME = 0x11,
 DELETE_OBJECTS = 0x12,
-BRING_CARD_TO_FRONT = 0x13
+BRING_CARD_TO_FRONT = 0x13,
+SAVE_BOARD = 0x14,
+BOARD_SAVED = 0x15,
+LIST_BOARDS = 0x16,
+BOARD_LIST = 0x17,
+CREATE_BOARD = 0x18,
+DELETE_BOARD = 0x19
 };
 
 struct Color {
@@ -161,8 +171,20 @@ Color getBorderColor() const {
     }
 };
 
+struct BoardInfo {
+    uint32_t boardID = 0;
+    string createdAt;
+    string lastEditedAt;
+    BoardTheme theme;
+};
+
+using BoardList = map<string, BoardInfo>;
+
 struct BoardState {
     uint32_t boardID;
+    string boardName;
+    string createdAt;
+    string lastEditedAt;
     unordered_map<uint32_t, Card> cards;
     unordered_map<uint32_t, Connector> connectors;
     vector<int> connectedClients;

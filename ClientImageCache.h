@@ -3,7 +3,11 @@
 
 #include "BoardStructs.h"
 
-#include <GL/glew.h>
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#else
+#include <GL/gl.h>
+#endif
 #include <future>
 #include <string>
 #include <unordered_map>

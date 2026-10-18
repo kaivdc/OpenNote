@@ -17,8 +17,6 @@ void createPacket(OpCode opcode, const json& payload);
 
 void heartBeatPacket(int sock);
 
-void AuthRequestPacket(int sock, const string version, const uint32_t boardID, const string authToken);
-
 void moveCardPacket(int sock,uint32_t cardID, float x, float y, float width, float height);
 
 //overload for moveCardPacket with zIndex]

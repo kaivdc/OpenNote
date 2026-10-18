@@ -91,6 +91,21 @@ struct BringCardToFrontCommand {
     uint32_t cardID;
 };
 
+struct SaveBoardCommand {
+    std::string boardName;
+};
+
+struct JoinBoardCommand {
+    uint32_t boardID;
+};
+
+struct RefreshBoardListCommand {};
+struct CreateBoardCommand {};
+
+struct DeleteBoardCommand {
+    uint32_t boardID;
+};
+
 using BoardCommand = std::variant<
     CreateCardCommand,
     DeleteCardCommand,
@@ -104,7 +119,12 @@ using BoardCommand = std::variant<
     SetConnectorThicknessCommand,
     SetConnectorColorCommand,
     SetBoardThemeColorCommand,
-    BringCardToFrontCommand>;
+    BringCardToFrontCommand,
+    SaveBoardCommand,
+    JoinBoardCommand,
+    RefreshBoardListCommand,
+    CreateBoardCommand,
+    DeleteBoardCommand>;
 
 class BoardCommandHandler {
 public:

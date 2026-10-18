@@ -1,6 +1,5 @@
 #include <iostream>
 #include <stdio.h>
-#include <strings.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -25,10 +24,9 @@
 using namespace std;
 using json = nlohmann::json;
 
-#define SERVER_PORT 5432
+constexpr int DEFAULT_SERVER_PORT = 5432; // default port when no port is provided
 #define MAX_LINE 256
 #define STDIN 0
-#define VERSION "0.0.1"
 
 struct ReceivedPacket {
     uint8_t opcode;
@@ -45,7 +43,8 @@ void clientReceivingLoop(long childSocket);
 Card cardFromJSON(const json& cardJSON);
 Connector connectorFromJSON(const json& connectorJSON);
 bool replaceBoardFromSnapshot(BoardState& board, const json& snapshot);
-void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHandler, const ReceivedPacket& packet);
+void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHandler,
+                         ClientRenderer& renderer, const ReceivedPacket& packet);
 
 // Reads the requested number of bytes, handling partial TCP reads
 bool readExact(int sock, char* buffer, size_t bytesToRead) {
@@ -180,6 +179,12 @@ void clientReceivingLoop(long childSocket)
                             queueReceivedPacket(msgType, std::move(payloadStr));
                             break;
                         }
+                        case static_cast<uint8_t>(OpCode::BOARD_SAVED):
+                        case static_cast<uint8_t>(OpCode::BOARD_LIST):
+                        {
+                            queueReceivedPacket(msgType, std::move(payloadStr));
+                            break;
+                        }
                         case static_cast<uint8_t>(OpCode::CLIENT_CONNECTED): // CLIENT_CONNECTED
                         {
                             queueReceivedPacket(msgType, std::move(payloadStr));
@@ -190,14 +195,23 @@ void clientReceivingLoop(long childSocket)
                             queueReceivedPacket(msgType, std::move(payloadStr));
                             break;
                         }
-                        case 0xFF:
+                        case static_cast<uint8_t>(OpCode::ERROR):
                         {
                             queueReceivedPacket(msgType, std::move(payloadStr));
                             break;
                         }
                         default:
                         {
-                            std::cout << "ERROR : Unknown Opcode: 0x" << hex << (int)msgType << "\n";
+                            const json errorReport = {
+                                {"errCode", 400},
+                                {"errorMsg", "The server sent an unknown opcode."},
+                                {"unknownOpcode", static_cast<unsigned int>(msgType)}
+                            };
+                            if (!sendPacket(childSocket, static_cast<uint8_t>(OpCode::ERROR), errorReport.dump())) {
+                                std::cerr << "[ERROR] : Failed to report an unknown server opcode.\n";
+                            }
+                            std::cerr << "[ERROR] : Unknown opcode received from server: "
+                                      << static_cast<unsigned int>(msgType) << "\n";
                             break;
                         }
                     }
@@ -242,6 +256,9 @@ bool replaceBoardFromSnapshot(BoardState& board, const json& snapshot) {
 
     BoardState updatedBoard;
     updatedBoard.boardID = snapshot.at("boardID").get<uint32_t>();
+    updatedBoard.boardName = snapshot.value("boardName", string{});
+    updatedBoard.createdAt = snapshot.value("createdAt", string{});
+    updatedBoard.lastEditedAt = snapshot.value("lastEditedAt", string{});
     updatedBoard.user_settings = board.user_settings;
     updatedBoard.theme = snapshot.at("theme").get<BoardTheme>();
 
@@ -267,17 +284,54 @@ bool replaceBoardFromSnapshot(BoardState& board, const json& snapshot) {
 }
 
 // Applies a board snapshot and server status packets to the local board
-void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHandler, const ReceivedPacket& packet) {
+void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHandler,
+                         ClientRenderer& renderer, const ReceivedPacket& packet) {
     try {
         switch (packet.opcode) {
             case static_cast<uint8_t>(OpCode::SYNC_BOARD): {
                 json snapshot = json::parse(packet.payload);
                 if (replaceBoardFromSnapshot(board, snapshot)) {
                     commandHandler.setBoardReady(true);
+                    renderer.clearSelection();
+                    renderer.setBoardSelectionVisible(false);
                     cout << "[CLIENT] : Board snapshot loaded for Board ID " << board.boardID << "\n";
                 } else {
                     cerr << "[ERROR] : Invalid board snapshot.\n";
                 }
+                break;
+            }
+            case static_cast<uint8_t>(OpCode::BOARD_SAVED): {
+                json payload = json::parse(packet.payload);
+                board.boardName = payload.value("boardName", board.boardName);
+                cout << "[CLIENT] : Board saved as " << board.boardName << ".\n";
+                break;
+            }
+            case static_cast<uint8_t>(OpCode::BOARD_LIST): {
+                json payload = json::parse(packet.payload);
+                if (!payload.is_object() || !payload.contains("boards") || !payload["boards"].is_array()) {
+                    cerr << "[ERROR] : Invalid board list from server.\n";
+                    break;
+                }
+
+                BoardList boardList;
+                for (const json& boardJSON : payload["boards"]) {
+                    if (!boardJSON.is_object() || !boardJSON.contains("boardName") ||
+                        !boardJSON["boardName"].is_string()) {
+                        continue;
+                    }
+                    const string boardName = boardJSON["boardName"].get<string>();
+                    BoardInfo boardInfo;
+                    boardInfo.boardID = boardJSON.value("boardID", 0u);
+                    boardInfo.createdAt = boardJSON.value("createdAt", string{});
+                    boardInfo.lastEditedAt = boardJSON.value("lastEditedAt", string{});
+                    if (boardJSON.contains("theme")) {
+                        boardInfo.theme = boardJSON.at("theme").get<BoardTheme>();
+                    }
+                    if (!boardName.empty() && boardInfo.boardID > 0) {
+                        boardList[boardName] = boardInfo;
+                    }
+                }
+                renderer.setAvailableBoards(boardList);
                 break;
             }
             case static_cast<uint8_t>(OpCode::CREATE_CARD): {
@@ -298,10 +352,13 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                 cout << "[CLIENT] : Another client disconnected from the board.\n";
                 break;
             }
-            case 0xFF: {
+            case static_cast<uint8_t>(OpCode::ERROR): {
                 json payload = json::parse(packet.payload);
                 cerr << "[ERROR] : Server rejected a command: "
                      << payload.value("errorMsg", string("Unknown server error.")) << "\n";
+                if (board.boardID != 0) {
+                    commandHandler.setBoardReady(true);
+                }
                 break;
             }
             case static_cast<uint8_t>(OpCode::MOVE_CARD):
@@ -495,33 +552,54 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
 int main(int argc, char *argv[])
 {
   std::cout << "[DEBUG] Main started! argc = " << argc << "\n" << std::flush;
-  if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <server_ip>\n";
+  if (argc < 2 || argc > 3) {
+    std::cerr << "Usage: " << argv[0] << " <server_host> [port]\n";
     return 1;
   }
 
-  struct sockaddr_in sin;
-  int s;
-
-  /* active open */
-  if ((s = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-  {
-    perror("select client: socket");
-    exit(1);
+  int serverPort = DEFAULT_SERVER_PORT;
+  if (argc == 3) {
+    char* portEnd = nullptr;
+    errno = 0;
+    const long parsedPort = std::strtol(argv[2], &portEnd, 10);
+    if (errno != 0 || portEnd == argv[2] || *portEnd != '\0' || parsedPort < 1 || parsedPort > 65535) {
+      std::cerr << "[ERROR] : Port must be a number between 1 and 65535.\n";
+      return 1;
+    }
+    serverPort = static_cast<int>(parsedPort);
   }
 
-  /* build address data structure */
-  bzero((char *)&sin, sizeof(sin));
-  sin.sin_family = AF_INET;
-  sin.sin_addr.s_addr = inet_addr(argv[1]);
-  sin.sin_port = htons(SERVER_PORT);
+  struct addrinfo addressHints{};
+  addressHints.ai_family = AF_INET;
+  addressHints.ai_socktype = SOCK_STREAM;
+  struct addrinfo* serverAddresses = nullptr;
+  const string serverPortText = to_string(serverPort);
+  const int lookupResult = getaddrinfo(argv[1], serverPortText.c_str(), &addressHints, &serverAddresses);
+  if (lookupResult != 0) {
+    std::cerr << "[ERROR] : Could not resolve server address: " << gai_strerror(lookupResult) << "\n";
+    return 1;
+  }
 
-  //connects to server
-  if (connect(s, (struct sockaddr *)&sin, sizeof(sin)) < 0)
-  {
-    perror("select client: connect");
+  int s = -1;
+  int connectionError = 0;
+  for (struct addrinfo* address = serverAddresses; address != nullptr; address = address->ai_next) {
+    s = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+    if (s < 0) {
+      connectionError = errno;
+      continue;
+    }
+    if (connect(s, address->ai_addr, address->ai_addrlen) == 0) {
+      break;
+    }
+    connectionError = errno;
     close(s);
-    exit(1);
+    s = -1;
+  }
+  freeaddrinfo(serverAddresses);
+  if (s < 0) {
+    errno = connectionError;
+    perror("select client: connect");
+    return 1;
   }
   std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
 
@@ -540,8 +618,8 @@ int main(int argc, char *argv[])
     // Initialize the local board while waiting for the server snapshot
     BoardState localBoard;
     localBoard.user_settings = user_settings;
-    localBoard.boardID = 1;
-    LocalBoardCommandHandler localCommandHandler(localBoard, s);
+    localBoard.boardID = 0;
+    LocalBoardCommandHandler localCommandHandler(s);
     localCommandHandler.setBoardReady(false);
     
     // Start receiving thread
@@ -555,10 +633,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Ask the server for the board snapshot
-    const string syncPayload = json{{"boardID", localBoard.boardID}}.dump();
-    if (!sendPacket(s, static_cast<uint8_t>(OpCode::SYNC_BOARD), syncPayload)) {
-        std::cerr << "[ERROR] : Failed to request board snapshot.\n";
+    // Ask the server for boards available to select
+    if (!sendPacket(s, static_cast<uint8_t>(OpCode::LIST_BOARDS), json::object().dump())) {
+        std::cerr << "[ERROR] : Failed to request board list.\n";
         shutdown(s, SHUT_RDWR);
         receivingThread.join();
         close(s);
@@ -570,15 +647,17 @@ int main(int argc, char *argv[])
     while (!renderer.shouldClose()) {
         queue<ReceivedPacket> pendingPackets = takeReceivedPackets();
         while (!pendingPackets.empty()) {
-            applyReceivedPacket(localBoard, localCommandHandler, pendingPackets.front());
+            applyReceivedPacket(localBoard, localCommandHandler, renderer, pendingPackets.front());
             pendingPackets.pop();
         }
 
         renderer.updateAndRender(localBoard, localCommandHandler);
     }
 
-    // Wake the thread if it is blocked in recv(), then wait for it to finish.
-    shutdown(s, SHUT_RDWR);
+    if (!sendPacket(s, static_cast<uint8_t>(OpCode::DISCONNECT), json::object().dump())) {
+        std::cerr << "[WARN] : Failed to send disconnect packet.\n";
+    }
+    shutdown(s, SHUT_WR);
     if (receivingThread.joinable())
     {
       receivingThread.join();

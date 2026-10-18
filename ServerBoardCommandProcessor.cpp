@@ -503,7 +503,8 @@ nlohmann::json ServerBoardCommandProcessor::boardSnapshotToJSON(const BoardState
         connectors.push_back(connectorToJSON(board.connectors.at(connectorID)));
     }
 
-    return {{"syncType", "snapshot"}, {"boardID", board.boardID}, {"theme", board.theme},
+    return {{"syncType", "snapshot"}, {"boardID", board.boardID}, {"boardName", board.boardName},
+            {"createdAt", board.createdAt}, {"lastEditedAt", board.lastEditedAt}, {"theme", board.theme},
             {"cards", cards}, {"connectors", connectors},
             {"nextCardID", board.nextCardID}, {"nextConnectorID", board.nextConnectorID}};
 }

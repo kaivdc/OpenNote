@@ -1,6 +1,5 @@
 #include <cerrno>
 #include <cmath>
-#include <limits>
 #include <algorithm>
 #include <cctype>
 #include <stdio.h>
@@ -54,6 +53,10 @@ condition_variable clientThreadsFinished;
 size_t activeClientThreads = 0;
 
 bool handleSyncBoard(int clientSocket, const std::string& payloadStr);
+bool handleSaveBoard(int clientSocket, const std::string& payloadStr);
+bool handleListBoards(int clientSocket, const std::string& payloadStr);
+bool handleCreateBoard(int clientSocket, const std::string& payloadStr);
+bool handleDeleteBoard(int clientSocket, const std::string& payloadStr);
 void handleBoardCommand(int clientSocket, OpCode opcode, const std::string& payloadStr);
 
 void broadcastToClients(const std::vector<int>& clients, int senderSocket, uint8_t msgType, const std::string& payloadStr, bool includeSender);
@@ -70,7 +73,7 @@ BoardState* getBoardForSocketLocked(int clientSocket);
 string opcodeName(uint8_t msgType) {
     switch (static_cast<OpCode>(msgType)) {
         case OpCode::HEARTBEAT: return "HEARTBEAT";
-        case OpCode::AUTH_REQ: return "AUTH_REQ";
+        case OpCode::ERROR: return "ERROR";
         case OpCode::MOVE_CARD: return "MOVE_CARD";
         case OpCode::EDIT_CARD_CONTENT: return "EDIT_CARD_CONTENT";
         case OpCode::CREATE_CARD: return "CREATE_CARD";
@@ -85,6 +88,12 @@ string opcodeName(uint8_t msgType) {
         case OpCode::EDIT_BOARD_THEME: return "EDIT_BOARD_THEME";
         case OpCode::DELETE_OBJECTS: return "DELETE_OBJECTS";
         case OpCode::BRING_CARD_TO_FRONT: return "BRING_CARD_TO_FRONT";
+        case OpCode::SAVE_BOARD: return "SAVE_BOARD";
+        case OpCode::BOARD_SAVED: return "BOARD_SAVED";
+        case OpCode::LIST_BOARDS: return "LIST_BOARDS";
+        case OpCode::BOARD_LIST: return "BOARD_LIST";
+        case OpCode::CREATE_BOARD: return "CREATE_BOARD";
+        case OpCode::DELETE_BOARD: return "DELETE_BOARD";
     }
     return "UNKNOWN";
 }
@@ -141,9 +150,17 @@ void ChildThread(long childSocket)
                             logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=HEARTBEAT outcome=received");
                             break;
                         }
-                        case static_cast<uint8_t>(OpCode::AUTH_REQ): // AUTH_REQ
+                        case static_cast<uint8_t>(OpCode::ERROR): // ERROR
                         {
-                            logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=AUTH_REQ outcome=received");
+                            const json errorReport = json::parse(payloadStr, nullptr, false);
+                            string unknownOpcode = "unknown";
+                            if (errorReport.is_object() && errorReport.contains("unknownOpcode") &&
+                                (errorReport["unknownOpcode"].is_number_integer() ||
+                                 errorReport["unknownOpcode"].is_number_unsigned())) {
+                                unknownOpcode = errorReport["unknownOpcode"].dump();
+                            }
+                            logServerMessage("WARN", "clientSocket=" + to_string(childSocket) +
+                                             " request=ERROR outcome=client_reported_unknown_opcode opcode=" + unknownOpcode);
                             break;
                         }
                         case static_cast<uint8_t>(OpCode::MOVE_CARD): // MOVE_CARD
@@ -165,6 +182,26 @@ void ChildThread(long childSocket)
                             handleSyncBoard(childSocket, payloadStr);
                             break;
                         }
+                        case static_cast<uint8_t>(OpCode::SAVE_BOARD): // SAVE_BOARD
+                        {
+                            handleSaveBoard(childSocket, payloadStr);
+                            break;
+                        }
+                        case static_cast<uint8_t>(OpCode::LIST_BOARDS): // LIST_BOARDS
+                        {
+                            handleListBoards(childSocket, payloadStr);
+                            break;
+                        }
+                        case static_cast<uint8_t>(OpCode::CREATE_BOARD): // CREATE_BOARD
+                        {
+                            handleCreateBoard(childSocket, payloadStr);
+                            break;
+                        }
+                        case static_cast<uint8_t>(OpCode::DELETE_BOARD): // DELETE_BOARD
+                        {
+                            handleDeleteBoard(childSocket, payloadStr);
+                            break;
+                        }
                         case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
                         {
                             logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=DISCONNECT outcome=received");
@@ -174,7 +211,7 @@ void ChildThread(long childSocket)
                         }
                         default:
                         {
-                            logServerMessage("WARN", "clientSocket=" + to_string(childSocket) + " request=UNKNOWN opcode=" + to_string(msgType) + " outcome=rejected");
+                            sendError(childSocket, 400, "Unknown opcode " + to_string(msgType) + ".", "UNKNOWN");
                             break;
                         }
                     }
@@ -245,7 +282,7 @@ void sendError(int sock, int errCode, const string& errorMsg, const string& requ
     logServerMessage(level, "clientSocket=" + to_string(sock) + " request=" + requestType +
                      " outcome=rejected errorCode=" + to_string(errCode) + " message=" + errorMsg);
     const string jsonPayload = json{{"errCode", errCode}, {"errorMsg", errorMsg}}.dump();
-    if (!sendPacket(sock, 0xFF, jsonPayload)) {
+    if (!sendPacket(sock, static_cast<uint8_t>(OpCode::ERROR), jsonPayload)) {
         logServerMessage("ERROR", "clientSocket=" + to_string(sock) + " request=" + requestType + " response=send_failed");
     }
 }
@@ -389,6 +426,16 @@ int main(int argc, char* argv[])
     listener = -1;
     stopClientConnections();
     waitForClientThreads();
+    {
+        lock_guard<mutex> lock(stateMutex);
+        for (auto& [boardID, board] : activeBoards) {
+            if (boardDatabase.saveBoard(board, false)) {
+                logServerMessage("INFO", "boardID=" + to_string(boardID) + " event=board_saved reason=server_shutdown");
+            } else {
+                logServerMessage("ERROR", "boardID=" + to_string(boardID) + " event=shutdown_save_failed");
+            }
+        }
+    }
     logServerMessage("INFO", "Server shutting down");
     return serverStopping ? 0 : 1;
 }
@@ -452,8 +499,7 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
 
     logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" + to_string(boardID) +
                      " request=" + opcodeName(static_cast<uint8_t>(opcode)) + " outcome=success");
-    const bool includeSender = opcode == OpCode::CREATE_CARD || opcode == OpCode::CREATE_CONNECTOR;
-    broadcastToClients(clients, clientSocket, static_cast<uint8_t>(opcode), result.updatePayload, includeSender);
+    broadcastToClients(clients, clientSocket, static_cast<uint8_t>(opcode), result.updatePayload, true);
 }
 
 // Removes a client from its board, notifies the other clients, and closes its socket
@@ -476,6 +522,13 @@ void cleanupClientSession(int clientSocket, const string& disconnectReason) {
                 auto& connectedClients = board.connectedClients;
                 connectedClients.erase(remove(connectedClients.begin(), connectedClients.end(), clientSocket), connectedClients.end());
                 clients = connectedClients;
+                if (connectedClients.empty()) {
+                    if (boardDatabase.saveBoard(board, false)) {
+                        logServerMessage("INFO", "boardID=" + to_string(boardID) + " event=board_saved reason=last_client_disconnected");
+                    } else {
+                        logServerMessage("ERROR", "boardID=" + to_string(boardID) + " event=last_client_save_failed");
+                    }
+                }
 
             }
 
@@ -562,8 +615,8 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
                     sendError(clientSocket, 500, "Could not load board from the database.", "SYNC_BOARD");
                     return false;
                 }
-                if (!boardFound && !boardDatabase.saveBoard(loadedBoard)) {
-                    sendError(clientSocket, 500, "Could not create board in the database.", "SYNC_BOARD");
+                if (!boardFound) {
+                    sendError(clientSocket, 404, "Board does not exist.", "SYNC_BOARD");
                     return false;
                 }
                 activeBoard = activeBoards.emplace(boardID, loadedBoard).first;
@@ -584,6 +637,15 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
                     connectedClients.erase(remove(connectedClients.begin(), connectedClients.end(), clientSocket), connectedClients.end());
                     previousClients = connectedClients;
                     switchedBoards = true;
+                    if (connectedClients.empty()) {
+                        if (boardDatabase.saveBoard(previous->second, false)) {
+                            logServerMessage("INFO", "boardID=" + to_string(previousBoardID) +
+                                             " event=board_saved reason=last_client_left_board");
+                        } else {
+                            logServerMessage("ERROR", "boardID=" + to_string(previousBoardID) +
+                                             " event=last_client_save_failed");
+                        }
+                    }
                 }
             }
 
@@ -615,4 +677,262 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
         return false;
     }
     return true;
+}
+
+// Saves the board assigned to the requesting client and confirms the saved name
+bool handleSaveBoard(int clientSocket, const string& payloadStr) {
+    try {
+        const json request = json::parse(payloadStr);
+        if (!request.is_object()) {
+            sendError(clientSocket, 400, "SAVE_BOARD payload must be a JSON object.", "SAVE_BOARD");
+            return false;
+        }
+
+        const bool isSaveAs = request.contains("boardName");
+        string requestedBoardName;
+        if (isSaveAs) {
+            if (!request["boardName"].is_string()) {
+                sendError(clientSocket, 400, "Board name must be text.", "SAVE_BOARD");
+                return false;
+            }
+            requestedBoardName = request["boardName"].get<string>();
+            if (requestedBoardName.size() > MAX_BOARD_NAME_LENGTH ||
+                requestedBoardName.find_first_not_of(" \t\r\n") == string::npos) {
+                sendError(clientSocket, 400, "Board name must contain between 1 and 64 characters.", "SAVE_BOARD");
+                return false;
+            }
+        }
+
+        json response;
+        bool clientHasBoard = false;
+        bool boardSaved = false;
+        bool boardNameAlreadyExists = false;
+        bool boardNameLookupFailed = false;
+        {
+            lock_guard<mutex> lock(stateMutex);
+            BoardState* board = getBoardForSocketLocked(clientSocket);
+            if (board != nullptr) {
+                clientHasBoard = true;
+                if (isSaveAs) {
+                    BoardList boardList;
+                    if (boardDatabase.listBoards(boardList)) {
+                        auto existingBoard = boardList.find(requestedBoardName);
+                        boardNameAlreadyExists = existingBoard != boardList.end() &&
+                                                 existingBoard->second.boardID != board->boardID;
+                    } else {
+                        boardNameLookupFailed = true;
+                    }
+                }
+
+                if (!boardNameAlreadyExists && !boardNameLookupFailed) {
+                    const string previousBoardName = board->boardName;
+                    if (isSaveAs) {
+                        board->boardName = requestedBoardName;
+                    }
+                    boardSaved = boardDatabase.saveBoard(*board, false);
+                    if (!boardSaved) {
+                        board->boardName = previousBoardName;
+                    }
+                }
+                if (boardSaved) {
+                    response = {{"boardID", board->boardID}, {"boardName", board->boardName}};
+                }
+            }
+        }
+
+        if (!clientHasBoard) {
+            sendError(clientSocket, 403, "Client is not synced to an active board.", "SAVE_BOARD");
+            return false;
+        }
+        if (boardNameAlreadyExists) {
+            sendError(clientSocket, 409, "A board with this name already exists.", "SAVE_BOARD");
+            return false;
+        }
+        if (boardNameLookupFailed) {
+            sendError(clientSocket, 500, "Could not check the board name.", "SAVE_BOARD");
+            return false;
+        }
+        if (!boardSaved) {
+            sendError(clientSocket, 500, "Could not save board.", "SAVE_BOARD");
+            return false;
+        }
+        if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::BOARD_SAVED), response.dump())) {
+            logServerMessage("ERROR", "clientSocket=" + to_string(clientSocket) + " request=SAVE_BOARD outcome=confirmation_failed");
+            return false;
+        }
+        logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" +
+                         to_string(response.at("boardID").get<uint32_t>()) + " request=SAVE_BOARD outcome=success");
+        return true;
+    } catch (const exception&) {
+        sendError(clientSocket, 400, "Malformed JSON in SAVE_BOARD.", "SAVE_BOARD");
+        return false;
+    }
+}
+
+// Sends the saved and active board names, IDs, and dates to one client
+bool handleListBoards(int clientSocket, const string& payloadStr) {
+    try {
+        const json request = json::parse(payloadStr);
+        if (!request.is_object()) {
+            sendError(clientSocket, 400, "LIST_BOARDS payload must be a JSON object.", "LIST_BOARDS");
+            return false;
+        }
+
+        BoardList boardList;
+        bool boardListLoaded = false;
+        {
+            lock_guard<mutex> lock(stateMutex);
+            boardListLoaded = boardDatabase.listBoards(boardList);
+            if (boardListLoaded) {
+                for (const auto& entry : activeBoards) {
+                    const BoardState& board = entry.second;
+                    if (board.boardName.empty()) continue;
+
+                    BoardInfo boardInfo;
+                    auto savedBoard = boardList.find(board.boardName);
+                    if (savedBoard != boardList.end()) {
+                        boardInfo = savedBoard->second;
+                    }
+                    boardInfo.boardID = board.boardID;
+                    if (!board.createdAt.empty()) {
+                        boardInfo.createdAt = board.createdAt;
+                    }
+                    if (!board.lastEditedAt.empty()) {
+                        boardInfo.lastEditedAt = board.lastEditedAt;
+                    }
+                    boardInfo.theme = board.theme;
+                    boardList[board.boardName] = boardInfo;
+                }
+            }
+        }
+
+        if (!boardListLoaded) {
+            sendError(clientSocket, 500, "Could not list boards.", "LIST_BOARDS");
+            return false;
+        }
+
+        json boardItems = json::array();
+        for (const auto& entry : boardList) {
+            boardItems.push_back({
+                {"boardName", entry.first},
+                {"boardID", entry.second.boardID},
+                {"createdAt", entry.second.createdAt},
+                {"lastEditedAt", entry.second.lastEditedAt},
+                {"theme", entry.second.theme}
+            });
+        }
+        const string response = json{{"boards", boardItems}}.dump();
+        if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::BOARD_LIST), response)) {
+            logServerMessage("ERROR", "clientSocket=" + to_string(clientSocket) + " request=LIST_BOARDS response=send_failed");
+            return false;
+        }
+        logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " request=LIST_BOARDS outcome=success");
+        return true;
+    } catch (const exception&) {
+        sendError(clientSocket, 400, "Malformed JSON in LIST_BOARDS.", "LIST_BOARDS");
+        return false;
+    }
+}
+
+// Creates a new board with a server-assigned ID and joins the requesting client
+bool handleCreateBoard(int clientSocket, const string& payloadStr) {
+    try {
+        const json request = json::parse(payloadStr);
+        if (!request.is_object()) {
+            sendError(clientSocket, 400, "CREATE_BOARD payload must be a JSON object.", "CREATE_BOARD");
+            return false;
+        }
+
+        BoardState newBoard;
+        bool boardCreated = false;
+        {
+            lock_guard<mutex> lock(stateMutex);
+            boardCreated = boardDatabase.getNextBoardID(newBoard.boardID);
+            if (boardCreated) {
+                boardCreated = boardDatabase.saveBoard(newBoard, false);
+            }
+        }
+
+        if (!boardCreated) {
+            sendError(clientSocket, 500, "Could not create board.", "CREATE_BOARD");
+            return false;
+        }
+
+        logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" +
+                         to_string(newBoard.boardID) + " request=CREATE_BOARD outcome=success");
+        return handleSyncBoard(clientSocket, json{{"boardID", newBoard.boardID}}.dump());
+    } catch (const exception&) {
+        sendError(clientSocket, 400, "Malformed JSON in CREATE_BOARD.", "CREATE_BOARD");
+        return false;
+    }
+}
+
+// Deletes a saved board when no clients are connected to it
+bool handleDeleteBoard(int clientSocket, const string& payloadStr) {
+    try {
+        const json request = json::parse(payloadStr);
+        if (!request.is_object()) {
+            sendError(clientSocket, 400, "DELETE_BOARD payload must be a JSON object.", "DELETE_BOARD");
+            return false;
+        }
+
+        const uint32_t boardID = request.value("boardID", 0u);
+        if (boardID == 0) {
+            sendError(clientSocket, 400, "Invalid board ID.", "DELETE_BOARD");
+            return false;
+        }
+
+        bool boardExists = false;
+        bool boardHasClients = false;
+        bool boardListLoaded = false;
+        bool boardDeleted = false;
+        {
+            lock_guard<mutex> lock(stateMutex);
+            auto activeBoard = activeBoards.find(boardID);
+            boardHasClients = activeBoard != activeBoards.end() && !activeBoard->second.connectedClients.empty();
+
+            if (!boardHasClients) {
+                BoardList boardList;
+                boardListLoaded = boardDatabase.listBoards(boardList);
+                if (boardListLoaded) {
+                    for (const auto& entry : boardList) {
+                        if (entry.second.boardID == boardID) {
+                            boardExists = true;
+                            break;
+                        }
+                    }
+                    if (boardExists) {
+                        boardDeleted = boardDatabase.deleteBoard(boardID);
+                        if (boardDeleted) {
+                            activeBoards.erase(boardID);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (boardHasClients) {
+            sendError(clientSocket, 409, "Cannot delete a board while clients are connected.", "DELETE_BOARD");
+            return false;
+        }
+        if (!boardListLoaded) {
+            sendError(clientSocket, 500, "Could not check the board list.", "DELETE_BOARD");
+            return false;
+        }
+        if (!boardExists) {
+            sendError(clientSocket, 404, "Board does not exist.", "DELETE_BOARD");
+            return false;
+        }
+        if (!boardDeleted) {
+            sendError(clientSocket, 500, "Could not delete board.", "DELETE_BOARD");
+            return false;
+        }
+
+        logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" +
+                         to_string(boardID) + " request=DELETE_BOARD outcome=success");
+        return handleListBoards(clientSocket, json::object().dump());
+    } catch (const exception&) {
+        sendError(clientSocket, 400, "Malformed JSON in DELETE_BOARD.", "DELETE_BOARD");
+        return false;
+    }
 }

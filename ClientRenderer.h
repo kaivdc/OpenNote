@@ -1,7 +1,11 @@
 #ifndef CLIENT_RENDERER_H
 #define CLIENT_RENDERER_H
 
-#include <GL/glew.h>
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#else
+#include <GL/gl.h>
+#endif
 #include <GLFW/glfw3.h>
 #include "BoardStructs.h"
 #include "BoardCommands.h"
@@ -63,17 +67,34 @@ private:
     uint32_t hoveredCardID = 0;
     uint32_t dropPreviewCardID = 0;
     std::vector<std::string> droppedPaths;
+    BoardList availableBoards;
+    bool showingBoardSelection = true;
+    char saveBoardName[MAX_BOARD_NAME_LENGTH + 1] = {};
+    bool openSaveBoardAsPopup = false;
+    bool saveBoardNameError = false;
+    uint32_t pendingDeleteBoardID = 0;
+    std::string pendingDeleteBoardName;
+    bool openDeleteBoardPopup = false;
 
 public:
     GLFWwindow* initialize(int width, int height, const char* title);
     void updateAndRender(const BoardState& board, BoardCommandHandler& commandHandler);
+    // Replaces the boards shown by the board selection screen
+    void setAvailableBoards(const BoardList& boardList);
+    // Shows or hides the board selection screen
+    void setBoardSelectionVisible(bool visible);
+    // Clears selected objects and selection controls
+    void clearSelection();
     void shutdown();
 
     bool shouldClose() const { return window && glfwWindowShouldClose(window); }
 
 private:
     void handleInput(const BoardState& board, BoardCommandHandler& commandHandler, ImVec2 boardCenter, bool hovered);
-    void handleContextMenu(BoardCommandHandler& commandHandler, const ContextMenuTarget& context);
+    // Draws the context menu for the current target and handles board saving
+    void handleContextMenu(const BoardState& board, BoardCommandHandler& commandHandler, const ContextMenuTarget& context);
+    // Draws the server boards and lets the client request one
+    void drawBoardSelectionScreen(BoardCommandHandler& commandHandler);
     void drawImageTexture(ImDrawList* drawList, GLuint texture, ImVec2 min, ImVec2 max) const;
     void processDroppedFiles(const BoardState& board, BoardCommandHandler& commandHandler);
     static void onFilesDropped(GLFWwindow* window, int pathCount, const char* paths[]);

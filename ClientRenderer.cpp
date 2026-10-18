@@ -2,10 +2,12 @@
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
+#include <cstdio>
 #include <iostream>
 #include "BoardStructs.h"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include "BoardCommands.h"
 #include "BoardInspector.h"
 #include "LocalBoardCommandHandler.h"
@@ -66,6 +68,8 @@ GLFWwindow* ClientRenderer::initialize(int width, int height, const char* title)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
 
     window = glfwCreateWindow(width, height, title, NULL, NULL);
     if (!window) {
@@ -78,13 +82,6 @@ GLFWwindow* ClientRenderer::initialize(int width, int height, const char* title)
     glfwSwapInterval(1);
     glfwSetWindowUserPointer(window, this);
     glfwSetDropCallback(window, &ClientRenderer::onFilesDropped);
-
-    glewExperimental = GL_TRUE;
-    GLenum err = glewInit();
-    if (err != GLEW_OK) {
-        std::cerr << "[WARNING] GLEW init returned: " << glewGetErrorString(err)
-                  << " (Code: " << err << "). Continuing anyway for WSLg...\n";
-    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -127,10 +124,19 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
 
     ImGui::Begin("board Root", nullptr, window_flags);
 
+    if (showingBoardSelection || board.boardID == 0) {
+        drawBoardSelectionScreen(commandHandler);
+    } else {
     // Info bar
     if (ImGui::BeginChild("Toolbar", ImVec2(0, 45), true)) {
         ImGui::Text("Board ID: %u | Cards: %zu | Connectors: %zu | Zoom: %.2fx",
                     board.boardID, board.cards.size(), board.connectors.size(), camera.zoom);
+        ImGui::SameLine();
+
+        if (ImGui::Button("Select Board")) {
+            showingBoardSelection = true;
+            commandHandler.handle(RefreshBoardListCommand{});
+        }
         ImGui::SameLine();
 
         if (ImGui::Button("Reset View")) {
@@ -197,10 +203,14 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
     }
 
     draw_list->PopClipRect();
+    }
+
     ImGui::End();
 
     // Selection sidebar hook (per-object editing options)
-    inspector.drawSidebar(board, imageCache, commandHandler, selection, selectionSidebarOpen);
+    if (!showingBoardSelection && board.boardID != 0) {
+        inspector.drawSidebar(board, imageCache, commandHandler, selection, selectionSidebarOpen);
+    }
 
     // Render to screen
     ImGui::Render();
@@ -212,6 +222,181 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(window);
+}
+
+// Replaces the boards shown by the board selection screen
+void ClientRenderer::setAvailableBoards(const BoardList& boardList) {
+    availableBoards = boardList;
+}
+
+// Shows or hides the board selection screen
+void ClientRenderer::setBoardSelectionVisible(bool visible) {
+    showingBoardSelection = visible;
+}
+
+// Clears selected objects and selection controls
+void ClientRenderer::clearSelection() {
+    selection = { MenuContextType::Background, 0 };
+    currentMenuTarget = { MenuContextType::Background, 0 };
+    selectedObjects.clear();
+    selectionSidebarOpen = false;
+    isSelectionSelecting = false;
+    selectionHasMoved = false;
+    draggedCardID = 0;
+    resizingCardID = 0;
+    geometryPreviewCardID = 0;
+    activeResizeHandle = ResizeHandle::None;
+    isConnecting = false;
+    connectingSourceCardID = 0;
+    isRightDragging = false;
+    isMiddleDragging = false;
+    dropPreviewCardID = 0;
+    droppedPaths.clear();
+    inspector.resetImageSourceEditor();
+}
+
+// Draws the server boards and lets the client request one
+void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandler) {
+    auto makeBoardNameLabel = [](const std::string& boardName, float maxWidth) {
+        const std::string prefix = "Board: ";
+        const std::string ellipsis = "...";
+        std::string label = prefix + boardName;
+        if (ImGui::CalcTextSize(label.c_str()).x <= maxWidth) {
+            return label;
+        }
+
+        size_t visibleBytes = boardName.size();
+        while (visibleBytes > 0) {
+            visibleBytes--;
+            while (visibleBytes > 0 &&
+                   (static_cast<unsigned char>(boardName[visibleBytes]) & 0xC0) == 0x80) {
+                visibleBytes--;
+            }
+            label = prefix + boardName.substr(0, visibleBytes) + ellipsis;
+            if (ImGui::CalcTextSize(label.c_str()).x <= maxWidth) {
+                return label;
+            }
+        }
+        return prefix + ellipsis;
+    };
+
+    ImGui::Text("Select a board");
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh Board List")) {
+        commandHandler.handle(RefreshBoardListCommand{});
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Create Board")) {
+        commandHandler.handle(CreateBoardCommand{});
+    }
+
+    ImGui::Separator();
+    ImGui::BeginChild("AvailableBoards", ImVec2(0.0f, 0.0f), false);
+    if (availableBoards.empty()) {
+        ImGui::Text("No boards are available.");
+    }
+
+    const float cardSpacing = ImGui::GetStyle().ItemSpacing.x;
+    const float minimumCardWidth = 260.0f;
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const int columnCount = std::max(1, static_cast<int>((availableWidth + cardSpacing) /
+                                                          (minimumCardWidth + cardSpacing)));
+    if (ImGui::BeginTable("BoardGrid", columnCount,
+                          ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+        ImGui::TableNextRow();
+        std::vector<const BoardList::value_type*> sortedBoards;
+        for (const auto& entry : availableBoards) {
+            sortedBoards.push_back(&entry);
+        }
+        std::sort(sortedBoards.begin(), sortedBoards.end(), [](const BoardList::value_type* left,
+                                                               const BoardList::value_type* right) {
+            const std::string& leftEditedAt = left->second.lastEditedAt;
+            const std::string& rightEditedAt = right->second.lastEditedAt;
+            if (leftEditedAt.empty() != rightEditedAt.empty()) {
+                return !leftEditedAt.empty();
+            }
+            if (leftEditedAt != rightEditedAt) {
+                return leftEditedAt > rightEditedAt;
+            }
+            return left->first < right->first;
+        });
+
+        for (const BoardList::value_type* entry : sortedBoards) {
+            const std::string& boardName = entry->first;
+            const BoardInfo& boardInfo = entry->second;
+            ImGui::TableNextColumn();
+            const Color boardTextColor = ThemeUtils::getTextColor(boardInfo.theme.cardColor);
+            const Color buttonTextColor = ThemeUtils::getTextColor(boardInfo.theme.accentColor);
+            const Color deleteButtonTextColor = ThemeUtils::getTextColor(boardInfo.theme.connectorColor);
+            const std::string editedAtLabel = "Edited At: " +
+                (boardInfo.lastEditedAt.empty() ? "Unknown" : boardInfo.lastEditedAt);
+            const std::string createdAtLabel = "Created At: " +
+                (boardInfo.createdAt.empty() ? "Unknown" : boardInfo.createdAt);
+            const ImGuiStyle& style = ImGui::GetStyle();
+            const float cardWidth = ImGui::GetContentRegionAvail().x;
+            const float textWidth = std::max(1.0f, cardWidth - style.WindowPadding.x * 2.0f -
+                                                       style.ChildBorderSize * 2.0f);
+            const std::string boardNameLabel = makeBoardNameLabel(boardName, textWidth);
+            const float cardHeight = style.WindowPadding.y * 2.0f +
+                ImGui::GetTextLineHeight() +
+                ImGui::GetTextLineHeight() +
+                ImGui::CalcTextSize(editedAtLabel.c_str(), nullptr, false, textWidth).y +
+                ImGui::CalcTextSize(createdAtLabel.c_str(), nullptr, false, textWidth).y +
+                ImGui::GetFrameHeight() * 2.0f + style.ItemSpacing.y * 6.0f + 3.0f;
+            ImGui::PushID(static_cast<int>(boardInfo.boardID));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, toImVec4(boardInfo.theme.cardColor));
+            ImGui::PushStyleColor(ImGuiCol_Border, toImVec4(ThemeUtils::getCardBorder(boardInfo.theme.cardColor)));
+            ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(boardTextColor));
+            ImGui::BeginChild("BoardCard", ImVec2(0.0f, cardHeight), true);
+            ImGui::TextUnformatted(boardNameLabel.c_str());
+            ImGui::Text("Board ID: %u", boardInfo.boardID);
+            ImGui::TextWrapped("%s", editedAtLabel.c_str());
+            ImGui::TextWrapped("%s", createdAtLabel.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Button, toImVec4(boardInfo.theme.accentColor));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, toImVec4(ThemeUtils::shift(boardInfo.theme.accentColor, 15, 15, 15)));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, toImVec4(ThemeUtils::shift(boardInfo.theme.accentColor, -15, -15, -15)));
+            ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(buttonTextColor));
+            if (ImGui::Button("Join Board", ImVec2(-1.0f, 0.0f))) {
+                commandHandler.handle(JoinBoardCommand{boardInfo.boardID});
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::PushStyleColor(ImGuiCol_Button, toImVec4(boardInfo.theme.connectorColor));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, toImVec4(ThemeUtils::shift(boardInfo.theme.connectorColor, 15, 15, 15)));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, toImVec4(ThemeUtils::shift(boardInfo.theme.connectorColor, -15, -15, -15)));
+            ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(deleteButtonTextColor));
+            if (ImGui::Button("Delete Board", ImVec2(-1.0f, 0.0f))) {
+                pendingDeleteBoardID = boardInfo.boardID;
+                pendingDeleteBoardName = boardName;
+                openDeleteBoardPopup = true;
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::EndChild();
+            ImGui::PopStyleColor(3);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+
+    if (openDeleteBoardPopup) {
+        ImGui::OpenPopup("Delete Board");
+        openDeleteBoardPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("Delete Board", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Delete board \"%s\"?", pendingDeleteBoardName.c_str());
+        ImGui::Text("This cannot be undone.");
+        ImGui::Text("Boards with connected clients cannot be deleted.");
+        if (ImGui::Button("Delete")) {
+            commandHandler.handle(DeleteBoardCommand{pendingDeleteBoardID});
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void ClientRenderer::onFilesDropped(GLFWwindow* droppedWindow, int pathCount, const char* paths[]) {
@@ -264,8 +449,8 @@ void ClientRenderer::handleInput(const BoardState& board, BoardCommandHandler& c
     // Camera panning + zoom
     handleCameraControls(hovered);
 
-    // Remember if a resize was in progress so releasing outside the card keeps the selection
-    bool wasResizing = (resizingCardID != 0);
+    // Remember if a card was being moved or resized so releasing outside the card keeps the selection
+    bool wasMovingOrResizing = draggedCardID != 0 || resizingCardID != 0;
 
     // Commit a geometry change once on release. The renderer keeps the preview
     // local during the gesture, so a future command sink can send one update.
@@ -301,10 +486,12 @@ void ClientRenderer::handleInput(const BoardState& board, BoardCommandHandler& c
 
     // Empty board space is only "background" when no object sits under the cursor
     bool backgroundHovered = hovered && hoveredCardID == 0 && hoveredConnectorID == 0;
+    bool canStartBackgroundSelection = backgroundHovered && !wasMovingOrResizing &&
+        draggedCardID == 0 && resizingCardID == 0;
 
     // Update the current selection (panning + zooming never clear it)
-    handleObjectSelection(hoveredCardID, hoveredConnectorID, backgroundHovered && !wasResizing);
-    updateSelectionSelection(board, boardCenter, backgroundHovered && !wasResizing);
+    handleObjectSelection(hoveredCardID, hoveredConnectorID, canStartBackgroundSelection);
+    updateSelectionSelection(board, boardCenter, canStartBackgroundSelection);
 
     // Double clicking an object opens its editing sidebar for that object
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -344,7 +531,7 @@ void ClientRenderer::handleInput(const BoardState& board, BoardCommandHandler& c
     }
 
     // Process context menu logic
-    handleContextMenu(commandHandler, currentMenuTarget);
+    handleContextMenu(board, commandHandler, currentMenuTarget);
 
     // Keyboard shortcut handler
     handleKeyboardShortcuts(commandHandler);
@@ -908,12 +1095,11 @@ void ClientRenderer::syncSelection(const BoardState& localBoard) {
     }
 }
 
-void ClientRenderer::handleContextMenu(BoardCommandHandler& commandHandler, const ContextMenuTarget& context) {
+void ClientRenderer::handleContextMenu(const BoardState& board, BoardCommandHandler& commandHandler, const ContextMenuTarget& context) {
     if (ImGui::BeginPopup("BoardContextMenu")) {
 
         // Background/general right click menu
         if (context.type == MenuContextType::Background) {
-
             if (ImGui::MenuItem("Create Card")) {
                 float spawnX = contextMenuWorldPos.x;
                 float spawnY = contextMenuWorldPos.y;
@@ -923,6 +1109,18 @@ void ClientRenderer::handleContextMenu(BoardCommandHandler& commandHandler, cons
             if (ImGui::MenuItem("Edit theme...")) {
                 setSelection({ MenuContextType::Theme, 0 });
                 selectionSidebarOpen = true;
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Save Board")) {
+                commandHandler.handle(SaveBoardCommand{});
+            }
+
+            if (ImGui::MenuItem("Save Board As...")) {
+                std::snprintf(saveBoardName, sizeof(saveBoardName), "%s", board.boardName.c_str());
+                saveBoardNameError = false;
+                openSaveBoardAsPopup = true;
             }
         }
 
@@ -957,6 +1155,36 @@ void ClientRenderer::handleContextMenu(BoardCommandHandler& commandHandler, cons
             }
         }
 
+        ImGui::EndPopup();
+    }
+
+    if (openSaveBoardAsPopup) {
+        ImGui::OpenPopup("Save Board As");
+        openSaveBoardAsPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("Save Board As", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Enter a name for this board:");
+        const bool enterPressed = ImGui::InputText("##BoardNameInput", saveBoardName, sizeof(saveBoardName), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (saveBoardName[0] != '\0') {
+            saveBoardNameError = false;
+        }
+        if (saveBoardNameError) {
+            ImGui::Text("Board name cannot be empty.");
+        }
+
+        if (ImGui::Button("Save") || enterPressed) {
+            if (saveBoardName[0] == '\0') {
+                saveBoardNameError = true;
+            } else {
+                commandHandler.handle(SaveBoardCommand{saveBoardName});
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 }
