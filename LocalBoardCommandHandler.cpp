@@ -1,9 +1,12 @@
 #include "LocalBoardCommandHandler.h"
+#include "PacketCreation.h"
+
+#include <iostream>
 
 // Connects the handler to the board it updates
-LocalBoardCommandHandler::LocalBoardCommandHandler(BoardState& board) : board(board) {}
+LocalBoardCommandHandler::LocalBoardCommandHandler(BoardState& board, int socket) : board(board), socket(socket) {}
 
-// Sends a board command to the matching local handler
+// Applies a command locally or sends it to the server
 void LocalBoardCommandHandler::handle(const BoardCommand& command) {
     if (!boardReady) return;
     std::visit([this](const auto& typedCommand) { apply(typedCommand); }, command);
@@ -14,9 +17,16 @@ void LocalBoardCommandHandler::setBoardReady(bool ready) {
     boardReady = ready;
 }
 
-// Creates a card on the local board
+// Sends a card creation command so the server can assign its ID
 void LocalBoardCommandHandler::apply(const CreateCardCommand& command) {
-    board.createCardAt(command.x, command.y, command.text);
+    json payload;
+    payload["x"] = command.x;
+    payload["y"] = command.y;
+    payload["text"] = command.text;
+
+    if (!sendPacket(socket, static_cast<uint8_t>(OpCode::CREATE_CARD), payload.dump())) {
+        std::cerr << "[ERROR] : Failed to send CREATE_CARD command.\n";
+    }
 }
 
 // Deletes a card from the local board
@@ -24,9 +34,15 @@ void LocalBoardCommandHandler::apply(const DeleteCardCommand& command) {
     board.deleteCard(command.cardID);
 }
 
-// Creates a connector between two cards on the local board
+// Sends a connector creation command so the server can assign its ID
 void LocalBoardCommandHandler::apply(const CreateConnectorCommand& command) {
-    board.createConnector(command.sourceCardID, command.targetCardID);
+    json payload;
+    payload["sourceCardID"] = command.sourceCardID;
+    payload["targetCardID"] = command.targetCardID;
+
+    if (!sendPacket(socket, static_cast<uint8_t>(OpCode::CREATE_CONNECTOR), payload.dump())) {
+        std::cerr << "[ERROR] : Failed to send CREATE_CONNECTOR command.\n";
+    }
 }
 
 // Deletes a connector from the local board

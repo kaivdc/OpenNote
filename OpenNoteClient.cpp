@@ -280,6 +280,16 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                 }
                 break;
             }
+            case static_cast<uint8_t>(OpCode::CREATE_CARD): {
+                Card card = cardFromJSON(json::parse(packet.payload));
+                board.cards[card.cardID] = card;
+                break;
+            }
+            case static_cast<uint8_t>(OpCode::CREATE_CONNECTOR): {
+                Connector connector = connectorFromJSON(json::parse(packet.payload));
+                board.connectors[connector.connectorID] = connector;
+                break;
+            }
             case static_cast<uint8_t>(OpCode::CLIENT_CONNECTED):
                 cout << "[CLIENT] : Another client connected to the board.\n";
                 break;
@@ -349,7 +359,7 @@ int main(int argc, char *argv[])
     BoardState localBoard;
     localBoard.user_settings = user_settings;
     localBoard.boardID = 1;
-    LocalBoardCommandHandler localCommandHandler(localBoard);
+    LocalBoardCommandHandler localCommandHandler(localBoard, s);
     localCommandHandler.setBoardReady(false);
     
     // Start receiving thread

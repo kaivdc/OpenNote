@@ -5,12 +5,13 @@
 
 class LocalBoardCommandHandler final : public BoardCommandHandler {
 public:
-    explicit LocalBoardCommandHandler(BoardState& board);
+    explicit LocalBoardCommandHandler(BoardState& board, int socket);
     void handle(const BoardCommand& command) override;
     void setBoardReady(bool ready);
 
 private:
     BoardState& board;
+    int socket;
     bool boardReady = true;
 
     void apply(const CreateCardCommand& command);
