@@ -14,6 +14,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
 #include <system_error>
 #include <cstring>
 #include <cstdlib>
@@ -32,6 +33,7 @@ using namespace std;
 using json = nlohmann::json;
 
 constexpr int DEFAULT_SERVER_PORT = 5432; // default port when no port is provided
+constexpr int AUTO_SAVE_INTERVAL_SECONDS = 30;
 #define MAX_LINE 256
 
 fd_set master; // master file descriptor list
@@ -51,6 +53,9 @@ bool serverShuttingDown = false;
 mutex clientThreadsMutex;
 condition_variable clientThreadsFinished;
 size_t activeClientThreads = 0;
+mutex autoSaveMutex;
+condition_variable autoSaveCondition;
+bool autoSaveStopping = false;
 
 bool handleSyncBoard(int clientSocket, const std::string& payloadStr);
 bool handleSaveBoard(int clientSocket, const std::string& payloadStr);
@@ -64,6 +69,9 @@ void cleanupClientSession(int clientSocket, const string& disconnectReason);
 void stopClientConnections();
 void waitForClientThreads();
 void finishClientThread();
+void saveActiveBoards(const string& saveReason);
+void autoSaveBoards();
+void stopAutoSave();
 bool readExact(int sock, char* buffer, size_t bytesToRead);
 bool sendPacket(int sock, uint8_t msgType, const std::string& payloadStr);
 void sendError(int sock, int errCode, const std::string& errorMsg, const string& requestType);
@@ -373,6 +381,16 @@ int main(int argc, char* argv[])
     signal(SIGTERM, stopServer);
     logServerMessage("INFO", "Server listening address=0.0.0.0 port=" + to_string(serverPort));
 
+    thread autoSaveThread;
+    try {
+        autoSaveThread = thread(autoSaveBoards);
+    } catch (const system_error& error) {
+        logServerMessage("ERROR", string("Could not start the board auto-save thread: ") + error.what());
+        close(listener);
+        listener = -1;
+        return 1;
+    }
+
     addrlen = sizeof(remoteaddr);
 
     // main loop
@@ -426,16 +444,11 @@ int main(int argc, char* argv[])
     listener = -1;
     stopClientConnections();
     waitForClientThreads();
-    {
-        lock_guard<mutex> lock(stateMutex);
-        for (auto& [boardID, board] : activeBoards) {
-            if (boardDatabase.saveBoard(board, false)) {
-                logServerMessage("INFO", "boardID=" + to_string(boardID) + " event=board_saved reason=server_shutdown");
-            } else {
-                logServerMessage("ERROR", "boardID=" + to_string(boardID) + " event=shutdown_save_failed");
-            }
-        }
+    stopAutoSave();
+    if (autoSaveThread.joinable()) {
+        autoSaveThread.join();
     }
+    saveActiveBoards("server_shutdown");
     logServerMessage("INFO", "Server shutting down");
     return serverStopping ? 0 : 1;
 }
@@ -582,6 +595,39 @@ void finishClientThread() {
     if (activeClientThreads == 0) {
         clientThreadsFinished.notify_all();
     }
+}
+
+// Saves every board currently loaded on the server without changing its edit date
+void saveActiveBoards(const string& saveReason) {
+    lock_guard<mutex> lock(stateMutex);
+    for (auto& [boardID, board] : activeBoards) {
+        if (boardDatabase.saveBoard(board, false)) {
+            logServerMessage("INFO", "boardID=" + to_string(boardID) + " event=board_saved reason=" + saveReason);
+        } else {
+            logServerMessage("ERROR", "boardID=" + to_string(boardID) + " event=board_save_failed reason=" + saveReason);
+        }
+    }
+}
+
+// Saves loaded boards every 30 seconds until the server is shutting down
+void autoSaveBoards() {
+    unique_lock<mutex> lock(autoSaveMutex);
+    while (!autoSaveCondition.wait_for(lock, chrono::seconds(AUTO_SAVE_INTERVAL_SECONDS), [] {
+        return autoSaveStopping;
+    })) {
+        lock.unlock();
+        saveActiveBoards("periodic_autosave");
+        lock.lock();
+    }
+}
+
+// Wakes the auto-save thread so it can stop before the server exits
+void stopAutoSave() {
+    {
+        lock_guard<mutex> lock(autoSaveMutex);
+        autoSaveStopping = true;
+    }
+    autoSaveCondition.notify_all();
 }
 
 // Joins a client to a board and sends the current board snapshot

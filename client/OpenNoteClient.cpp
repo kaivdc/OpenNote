@@ -544,6 +544,7 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
             default:
                 break;
         }
+        renderer.confirmChange(packet.opcode, board);
     } catch (const exception& error) {
         cerr << "[ERROR] : Could not apply server packet: " << error.what() << "\n";
     }

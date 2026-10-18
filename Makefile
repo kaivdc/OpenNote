@@ -4,7 +4,7 @@ CXX ?= g++
 UNAME_S := $(shell uname -s)
 
 # Common compile flags
-CXXFLAGS = -g -std=c++20 -pthread -Wall -Wextra -Iimgui -Iimgui/backends -Ithird_party
+CXXFLAGS = -g -std=c++20 -pthread -Wall -Wextra -Iclient -Iserver -Ishared -Iimgui -Iimgui/backends -Ithird_party
 
 # Base link flags, extended per-platform below
 SERVER_LDFLAGS = -pthread
@@ -38,23 +38,30 @@ IMGUI_SRCS = imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_tables.cpp imgui/i
              imgui/backends/imgui_impl_glfw.cpp imgui/backends/imgui_impl_opengl3.cpp
 IMGUI_OBJS = $(IMGUI_SRCS:.cpp=.o)
 
+SERVER_OBJS = server/OpenNoteServer.o server/ServerBoardCommandProcessor.o server/BoardDatabase.o server/ServerLogging.o
+CLIENT_OBJS = client/OpenNoteClient.o client/ClientRenderer.o client/BoardInspector.o client/ClientImageCache.o \
+              client/LocalBoardCommandHandler.o client/PacketCreation.o
+
 all: OpenNoteServer OpenNoteClient
 
 # Build the Server exe
-OpenNoteServer: OpenNoteServer.o ServerBoardCommandProcessor.o BoardDatabase.o ServerLogging.o
-	$(CXX) $(CXXFLAGS) -o OpenNoteServer OpenNoteServer.o ServerBoardCommandProcessor.o BoardDatabase.o ServerLogging.o $(SERVER_LDFLAGS)
+OpenNoteServer: $(SERVER_OBJS)
+	$(CXX) $(CXXFLAGS) -o OpenNoteServer $(SERVER_OBJS) $(SERVER_LDFLAGS)
 
 # Build the client exe (client, renderer, and ImGui)
-OpenNoteClient: OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o PacketCreation.o $(IMGUI_OBJS)
-	$(CXX) $(CXXFLAGS) -o OpenNoteClient OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o PacketCreation.o $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
+OpenNoteClient: $(CLIENT_OBJS) $(IMGUI_OBJS)
+	$(CXX) $(CXXFLAGS) -o OpenNoteClient $(CLIENT_OBJS) $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
 
-OpenNoteClient.o ClientRenderer.o BoardInspector.o ClientImageCache.o LocalBoardCommandHandler.o: BoardCommands.h BoardUIState.h BoardInspector.h ClientImageCache.h ClientRenderer.h LocalBoardCommandHandler.h
-PacketCreation.o: PacketCreation.h
-OpenNoteServer.o ServerBoardCommandProcessor.o: ServerBoardCommandProcessor.h ServerLogging.h
-BoardDatabase.o: BoardDatabase.h
-BoardDatabase.o ServerLogging.o: ServerLogging.h
+$(CLIENT_OBJS): shared/BoardStructs.h shared/ClientSettings.h client/BoardCommands.h client/BoardUIState.h \
+                client/BoardInspector.h client/ClientImageCache.h client/ClientRenderer.h \
+                client/LocalBoardCommandHandler.h client/PacketCreation.h
+$(SERVER_OBJS): shared/BoardStructs.h shared/ClientSettings.h server/ServerBoardCommandProcessor.h \
+                server/BoardDatabase.h server/ServerLogging.h
 
-%.o: %.cpp BoardStructs.h
+client/%.o: client/%.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+server/%.o: server/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # imgui core
@@ -66,4 +73,4 @@ imgui/backends/%.o: imgui/backends/%.cpp
 
  # clean
 clean:
-	rm -f OpenNoteServer OpenNoteClient *.o imgui/*.o imgui/backends/*.o core
+	rm -f OpenNoteServer OpenNoteClient *.o client/*.o server/*.o imgui/*.o imgui/backends/*.o core

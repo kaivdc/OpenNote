@@ -252,7 +252,96 @@ void ClientRenderer::clearSelection() {
     isMiddleDragging = false;
     dropPreviewCardID = 0;
     droppedPaths.clear();
+    pendingChangePreviews.clear();
     inspector.resetImageSourceEditor();
+}
+
+// Adds a local preview for a supported board command
+void ClientRenderer::previewChange(const BoardCommand& command) {
+    const bool hasPreview = std::holds_alternative<SetCardGeometryCommand>(command) ||
+        std::holds_alternative<DeleteCardCommand>(command) ||
+        std::holds_alternative<DeleteConnectorCommand>(command) ||
+        std::holds_alternative<DeleteObjectsCommand>(command) ||
+        std::holds_alternative<CreateConnectorCommand>(command);
+    if (!hasPreview) {
+        return;
+    }
+
+    if (const DeleteCardCommand* deleteCard = std::get_if<DeleteCardCommand>(&command)) {
+        if (isPendingDelete(MenuContextType::Card, deleteCard->cardID)) {
+            return;
+        }
+        if (isSelected(MenuContextType::Card, deleteCard->cardID)) {
+            setSelection({MenuContextType::Background, 0});
+            selectionSidebarOpen = false;
+        }
+        if (draggedCardID == deleteCard->cardID || resizingCardID == deleteCard->cardID) {
+            draggedCardID = 0;
+            resizingCardID = 0;
+            geometryPreviewCardID = 0;
+            activeResizeHandle = ResizeHandle::None;
+        }
+    }
+
+    if (const DeleteConnectorCommand* deleteConnector = std::get_if<DeleteConnectorCommand>(&command)) {
+        if (isPendingDelete(MenuContextType::Connector, deleteConnector->connectorID)) {
+            return;
+        }
+        if (isSelected(MenuContextType::Connector, deleteConnector->connectorID)) {
+            setSelection({MenuContextType::Background, 0});
+            selectionSidebarOpen = false;
+        }
+    }
+
+    pendingChangePreviews.push_back(command);
+}
+
+// Updates local previews after a server packet changes the board
+void ClientRenderer::confirmChange(uint8_t opcode, const BoardState& board) {
+    if (opcode == static_cast<uint8_t>(OpCode::ERROR) ||
+        opcode == static_cast<uint8_t>(OpCode::SYNC_BOARD)) {
+        pendingChangePreviews.clear();
+        return;
+    }
+
+    pendingChangePreviews.erase(
+        std::remove_if(pendingChangePreviews.begin(), pendingChangePreviews.end(), [&](const BoardCommand& change) {
+            if (const DeleteCardCommand* deletion = std::get_if<DeleteCardCommand>(&change)) {
+                return board.cards.find(deletion->cardID) == board.cards.end();
+            }
+            if (const DeleteConnectorCommand* deletion = std::get_if<DeleteConnectorCommand>(&change)) {
+                return board.connectors.find(deletion->connectorID) == board.connectors.end();
+            }
+            if (const DeleteObjectsCommand* deletion = std::get_if<DeleteObjectsCommand>(&change)) {
+                for (const BoardObjectRef& object : deletion->objects) {
+                    if (object.kind == BoardObjectRef::Kind::Card && board.cards.find(object.id) != board.cards.end()) {
+                        return false;
+                    }
+                    if (object.kind == BoardObjectRef::Kind::Connector && board.connectors.find(object.id) != board.connectors.end()) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (const SetCardGeometryCommand* geometry = std::get_if<SetCardGeometryCommand>(&change)) {
+                const auto cardIt = board.cards.find(geometry->cardID);
+                if (cardIt == board.cards.end()) {
+                    return true;
+                }
+                const Card& card = cardIt->second;
+                return fabsf(geometry->x - card.x) <= 0.0001f &&
+                    fabsf(geometry->y - card.y) <= 0.0001f &&
+                    fabsf(geometry->width - card.width) <= 0.0001f &&
+                    fabsf(geometry->height - card.height) <= 0.0001f;
+            }
+            if (const CreateConnectorCommand* connector = std::get_if<CreateConnectorCommand>(&change)) {
+                return board.cards.find(connector->sourceCardID) == board.cards.end() ||
+                    board.cards.find(connector->targetCardID) == board.cards.end() ||
+                    board.connectorExistsBetween(connector->sourceCardID, connector->targetCardID);
+            }
+            return false;
+        }),
+        pendingChangePreviews.end());
 }
 
 // Draws the server boards and lets the client request one
@@ -384,9 +473,11 @@ void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandle
     }
 
     if (ImGui::BeginPopupModal("Delete Board", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
         ImGui::Text("Delete board \"%s\"?", pendingDeleteBoardName.c_str());
         ImGui::Text("This cannot be undone.");
         ImGui::Text("Boards with connected clients cannot be deleted.");
+        ImGui::PopStyleColor();
         if (ImGui::Button("Delete")) {
             commandHandler.handle(DeleteBoardCommand{pendingDeleteBoardID});
             ImGui::CloseCurrentPopup();
@@ -452,8 +543,7 @@ void ClientRenderer::handleInput(const BoardState& board, BoardCommandHandler& c
     // Remember if a card was being moved or resized so releasing outside the card keeps the selection
     bool wasMovingOrResizing = draggedCardID != 0 || resizingCardID != 0;
 
-    // Commit a geometry change once on release. The renderer keeps the preview
-    // local during the gesture, so a future command sink can send one update.
+    // Keep the local geometry visible until the server confirms the change
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && geometryPreviewCardID != 0) {
         if (resizingCardID != 0) {
             geometryPreview = applyCardResize(geometryPreview, ImGui::GetIO().MouseDelta);
@@ -463,12 +553,14 @@ void ClientRenderer::handleInput(const BoardState& board, BoardCommandHandler& c
         }
 
         if (board.cards.find(geometryPreviewCardID) != board.cards.end()) {
-            commandHandler.handle(SetCardGeometryCommand{
+            const SetCardGeometryCommand command{
                 geometryPreviewCardID,
                 geometryPreview.x,
                 geometryPreview.y,
                 geometryPreview.width,
-                geometryPreview.height});
+                geometryPreview.height};
+            previewChange(command);
+            commandHandler.handle(command);
         }
         draggedCardID = 0;
         resizingCardID = 0;
@@ -575,7 +667,7 @@ uint32_t ClientRenderer::submitCardHitboxes(const BoardState& board, BoardComman
     uint32_t hoveredCardID = 0;
 
     // A click on a resize handle of the selected card starts a resize, even on the part outside the card
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && selection.type == MenuContextType::Card) {
+    if (!isConnecting && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && selection.type == MenuContextType::Card) {
         auto it = board.cards.find(selection.targetID);
         if (it != board.cards.end()) {
             CardGeometry geometry = geometryForCard(it->second);
@@ -591,6 +683,9 @@ uint32_t ClientRenderer::submitCardHitboxes(const BoardState& board, BoardComman
     }
 
     for (uint32_t cardID : board.getCardIDsInZOrder()) {
+        if (isPendingDelete(MenuContextType::Card, cardID)) {
+            continue;
+        }
         auto cardIt = board.cards.find(cardID);
         if (cardIt == board.cards.end()) {
             continue;
@@ -613,7 +708,7 @@ uint32_t ClientRenderer::submitCardHitboxes(const BoardState& board, BoardComman
         }
 
         // A left click on a card grabs it for dragging (only one card at a time)
-        if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (!isConnecting && ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             if (draggedCardID == 0 && resizingCardID == 0) {
                 draggedCardID = card.cardID;
                 geometryPreviewCardID = draggedCardID;
@@ -642,6 +737,12 @@ uint32_t ClientRenderer::submitCardHitboxes(const BoardState& board, BoardComman
 ClientRenderer::CardGeometry ClientRenderer::geometryForCard(const Card& card) const {
     if (geometryPreviewCardID == card.cardID) {
         return geometryPreview;
+    }
+    for (auto changeIt = pendingChangePreviews.rbegin(); changeIt != pendingChangePreviews.rend(); ++changeIt) {
+        const SetCardGeometryCommand* geometry = std::get_if<SetCardGeometryCommand>(&*changeIt);
+        if (geometry != nullptr && geometry->cardID == card.cardID) {
+            return {geometry->x, geometry->y, geometry->width, geometry->height};
+        }
     }
     return {card.x, card.y, card.width, card.height};
 }
@@ -821,6 +922,11 @@ uint32_t ClientRenderer::hitTestConnector(const BoardState& localBoard, ImVec2 s
     float bestDistance = 1e30f;
 
     for (const auto& [id, conn] : localBoard.connectors) {
+        if (isPendingDelete(MenuContextType::Connector, conn.connectorID) ||
+            isPendingDelete(MenuContextType::Card, conn.sourceCardID) ||
+            isPendingDelete(MenuContextType::Card, conn.targetCardID)) {
+            continue;
+        }
         auto srcIt = localBoard.cards.find(conn.sourceCardID);
         auto tgtIt = localBoard.cards.find(conn.targetCardID);
         if (srcIt == localBoard.cards.end() || tgtIt == localBoard.cards.end()) {
@@ -967,6 +1073,9 @@ void ClientRenderer::selectObjectsInSelection(const BoardState& localBoard, ImVe
     std::vector<ContextMenuTarget> targets;
 
     for (uint32_t id : localBoard.getCardIDsInZOrder()) {
+        if (isPendingDelete(MenuContextType::Card, id)) {
+            continue;
+        }
         const auto cardIt = localBoard.cards.find(id);
         if (cardIt == localBoard.cards.end()) {
             continue;
@@ -981,6 +1090,11 @@ void ClientRenderer::selectObjectsInSelection(const BoardState& localBoard, ImVe
     }
 
     for (const auto& [id, connector] : localBoard.connectors) {
+        if (isPendingDelete(MenuContextType::Connector, connector.connectorID) ||
+            isPendingDelete(MenuContextType::Card, connector.sourceCardID) ||
+            isPendingDelete(MenuContextType::Card, connector.targetCardID)) {
+            continue;
+        }
         const auto srcIt = localBoard.cards.find(connector.sourceCardID);
         const auto tgtIt = localBoard.cards.find(connector.targetCardID);
         if (srcIt == localBoard.cards.end() || tgtIt == localBoard.cards.end()) {
@@ -1018,7 +1132,11 @@ void ClientRenderer::deleteSelectedObjects(BoardCommandHandler& commandHandler) 
             objects.push_back({BoardObjectRef::Kind::Connector, target.targetID});
         }
     }
-    commandHandler.handle(DeleteObjectsCommand{std::move(objects)});
+    if (!objects.empty()) {
+        const DeleteObjectsCommand command{objects};
+        previewChange(command);
+        commandHandler.handle(command);
+    }
 
     setSelection({ MenuContextType::Background, 0 });
     selectionSidebarOpen = false;
@@ -1042,7 +1160,9 @@ void ClientRenderer::handleConnectingMode(const BoardState& board, BoardCommandH
         // Leave on success so user can select another target after invalid
         if (board.cards.find(hoveredCardID) != board.cards.end() &&
             !board.connectorExistsBetween(connectingSourceCardID, hoveredCardID)) {
-            commandHandler.handle(CreateConnectorCommand{connectingSourceCardID, hoveredCardID});
+            const CreateConnectorCommand command{connectingSourceCardID, hoveredCardID};
+            previewChange(command);
+            commandHandler.handle(command);
             isConnecting = false;
         }
     }
@@ -1065,6 +1185,46 @@ void ClientRenderer::handleKeyboardShortcuts(BoardCommandHandler& commandHandler
 bool ClientRenderer::isSelected(MenuContextType type, uint32_t id) const {
     for (const ContextMenuTarget& selected : selectedObjects) {
         if (selected.type == type && selected.targetID == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Checks whether an object is waiting for server confirmation of deletion
+bool ClientRenderer::isPendingDelete(MenuContextType type, uint32_t id) const {
+    for (const BoardCommand& change : pendingChangePreviews) {
+        if (type == MenuContextType::Card) {
+            const DeleteCardCommand* card = std::get_if<DeleteCardCommand>(&change);
+            if (card != nullptr && card->cardID == id) {
+                return true;
+            }
+        } else if (type == MenuContextType::Connector) {
+            const DeleteConnectorCommand* connector = std::get_if<DeleteConnectorCommand>(&change);
+            if (connector != nullptr && connector->connectorID == id) {
+                return true;
+            }
+        }
+
+        const DeleteObjectsCommand* objects = std::get_if<DeleteObjectsCommand>(&change);
+        if (objects != nullptr) {
+            for (const BoardObjectRef& object : objects->objects) {
+                const bool isCard = type == MenuContextType::Card && object.kind == BoardObjectRef::Kind::Card;
+                const bool isConnector = type == MenuContextType::Connector && object.kind == BoardObjectRef::Kind::Connector;
+                if ((isCard || isConnector) && object.id == id) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Checks whether a card has a geometry preview waiting for the server
+bool ClientRenderer::hasPendingGeometry(uint32_t cardID) const {
+    for (const BoardCommand& change : pendingChangePreviews) {
+        const SetCardGeometryCommand* geometry = std::get_if<SetCardGeometryCommand>(&change);
+        if (geometry != nullptr && geometry->cardID == cardID) {
             return true;
         }
     }
@@ -1135,7 +1295,9 @@ void ClientRenderer::handleContextMenu(const BoardState& board, BoardCommandHand
 
             // Delete card option (new options can be expanded under here)
             if (ImGui::MenuItem("Delete Card")) {
-                commandHandler.handle(DeleteCardCommand{context.targetID});
+                const DeleteCardCommand command{context.targetID};
+                previewChange(command);
+                commandHandler.handle(command);
             }
         }
 
@@ -1144,7 +1306,9 @@ void ClientRenderer::handleContextMenu(const BoardState& board, BoardCommandHand
 
             // Delete connector option (new options can be expanded under here)
             if (ImGui::MenuItem("Delete Connector")) {
-                commandHandler.handle(DeleteConnectorCommand{context.targetID});
+                const DeleteConnectorCommand command{context.targetID};
+                previewChange(command);
+                commandHandler.handle(command);
             }
         }
 
@@ -1232,6 +1396,11 @@ void ClientRenderer::drawGrid(ImDrawList* draw_list, const BoardState& board, Im
 void ClientRenderer::drawConnectors(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
     const BoardTheme theme = inspector.displayTheme(board);
     for (const auto& [id, conn] : board.connectors) {
+        if (isPendingDelete(MenuContextType::Connector, conn.connectorID) ||
+            isPendingDelete(MenuContextType::Card, conn.sourceCardID) ||
+            isPendingDelete(MenuContextType::Card, conn.targetCardID)) {
+            continue;
+        }
         if (board.cards.find(conn.sourceCardID) == board.cards.end() ||
             board.cards.find(conn.targetCardID) == board.cards.end()) {
             continue;
@@ -1257,27 +1426,63 @@ void ClientRenderer::drawConnectors(ImDrawList* draw_list, const BoardState& boa
 }
 
 void ClientRenderer::drawConnectionPreview(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
-    if (!isConnecting) return;
+    const uint32_t previewColor = ThemeUtils::toImColor(inspector.displayTheme(board).connectorColor);
+    const float previewThickness = board.user_settings.defaultConnectorThickness * camera.zoom;
 
-    // Verify source card still exists before drawing preview
-    if (board.cards.find(connectingSourceCardID) != board.cards.end()) {
-        const Card& srcCard = board.cards.at(connectingSourceCardID);
-        const CardGeometry geometry = geometryForCard(srcCard);
+    if (isConnecting) {
+        auto sourceIt = board.cards.find(connectingSourceCardID);
+        if (sourceIt == board.cards.end() || isPendingDelete(MenuContextType::Card, connectingSourceCardID)) {
+            isConnecting = false;
+        } else {
+            const Card& sourceCard = sourceIt->second;
+            const CardGeometry geometry = geometryForCard(sourceCard);
+            const ImVec2 sourceCenter = worldToScreen(
+                geometry.x + geometry.width / 2.0f,
+                geometry.y + geometry.height / 2.0f,
+                boardCenter);
+            draw_list->AddLine(sourceCenter, ImGui::GetIO().MousePos, previewColor, previewThickness);
+        }
+    }
 
-        ImVec2 srcCenter = worldToScreen(geometry.x + geometry.width / 2.0f, geometry.y + geometry.height / 2.0f, boardCenter);
-        ImVec2 mousePos = ImGui::GetIO().MousePos;
+    for (const BoardCommand& change : pendingChangePreviews) {
+        const CreateConnectorCommand* connector = std::get_if<CreateConnectorCommand>(&change);
+        if (connector == nullptr) {
+            continue;
+        }
+        auto sourceIt = board.cards.find(connector->sourceCardID);
+        auto targetIt = board.cards.find(connector->targetCardID);
+        if (sourceIt == board.cards.end() || targetIt == board.cards.end() ||
+            isPendingDelete(MenuContextType::Card, connector->sourceCardID) ||
+            isPendingDelete(MenuContextType::Card, connector->targetCardID)) {
+            continue;
+        }
 
-        uint32_t previewColor = ThemeUtils::toImColor(inspector.displayTheme(board).connectorColor);
-        draw_list->AddLine(srcCenter, mousePos, previewColor, 10.0f * camera.zoom);
-    } else {
-        // Fallback in case card was deleted in the split second we rendered (stupid)
-        isConnecting = false;
+        const CardGeometry sourceGeometry = geometryForCard(sourceIt->second);
+        const CardGeometry targetGeometry = geometryForCard(targetIt->second);
+        const ImVec2 sourceCenter = worldToScreen(
+            sourceGeometry.x + sourceGeometry.width / 2.0f,
+            sourceGeometry.y + sourceGeometry.height / 2.0f,
+            boardCenter);
+        const ImVec2 targetCenter = worldToScreen(
+            targetGeometry.x + targetGeometry.width / 2.0f,
+            targetGeometry.y + targetGeometry.height / 2.0f,
+            boardCenter);
+        draw_list->AddLine(sourceCenter, targetCenter, previewColor, previewThickness);
     }
 }
 
 void ClientRenderer::drawCards(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
     const BoardTheme theme = inspector.displayTheme(board);
-    for (uint32_t cardID : board.getCardIDsInZOrder()) {
+    std::vector<uint32_t> cardIDs = board.getCardIDsInZOrder();
+    std::stable_partition(cardIDs.begin(), cardIDs.end(), [this](uint32_t cardID) {
+        const bool isBeingMoved = cardID == draggedCardID || cardID == resizingCardID || hasPendingGeometry(cardID);
+        return !isBeingMoved;
+    });
+
+    for (uint32_t cardID : cardIDs) {
+        if (isPendingDelete(MenuContextType::Card, cardID)) {
+            continue;
+        }
         auto cardIt = board.cards.find(cardID);
         if (cardIt == board.cards.end()) {
             continue;

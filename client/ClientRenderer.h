@@ -44,6 +44,7 @@ private:
     uint32_t resizingCardID = 0;
     uint32_t geometryPreviewCardID = 0;
     CardGeometry geometryPreview;
+    std::vector<BoardCommand> pendingChangePreviews;
     ResizeHandle activeResizeHandle = ResizeHandle::None;
     ImVec2 contextMenuWorldPos = {0.0f, 0.0f};
     ContextMenuTarget currentMenuTarget;
@@ -85,6 +86,10 @@ public:
     void setBoardSelectionVisible(bool visible);
     // Clears selected objects and selection controls
     void clearSelection();
+    // Adds a local preview for a board command while the server processes it
+    void previewChange(const BoardCommand& command);
+    // Updates local previews after a server packet changes the board
+    void confirmChange(uint8_t opcode, const BoardState& board);
     void shutdown();
 
     bool shouldClose() const { return window && glfwWindowShouldClose(window); }
@@ -116,6 +121,10 @@ private:
 
     // Selection helpers
     bool isSelected(MenuContextType type, uint32_t id) const;
+    // Checks whether an object is waiting for server confirmation of deletion
+    bool isPendingDelete(MenuContextType type, uint32_t id) const;
+    // Checks whether a card geometry update is waiting for server confirmation
+    bool hasPendingGeometry(uint32_t cardID) const;
     void setSelection(const ContextMenuTarget& target);
     void setMultipleSelection(const std::vector<ContextMenuTarget>& targets);
     void syncSelection(const BoardState& localBoard);
