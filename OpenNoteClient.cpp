@@ -25,7 +25,7 @@
 using namespace std;
 using json = nlohmann::json;
 
-constexpr int DEFAULT_SERVER_PORT = 5432; // default port when no port is provided
+#define SERVER_PORT 5432
 #define MAX_LINE 256
 #define STDIN 0
 #define VERSION "0.0.1"
@@ -290,17 +290,199 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                 board.connectors[connector.connectorID] = connector;
                 break;
             }
-            case static_cast<uint8_t>(OpCode::CLIENT_CONNECTED):
+            case static_cast<uint8_t>(OpCode::CLIENT_CONNECTED):  {
                 cout << "[CLIENT] : Another client connected to the board.\n";
                 break;
-            case static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED):
+            }
+            case static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED): {
                 cout << "[CLIENT] : Another client disconnected from the board.\n";
                 break;
+            }
             case 0xFF: {
                 json payload = json::parse(packet.payload);
                 cerr << "[ERROR] : Server rejected a command: "
                      << payload.value("errorMsg", string("Unknown server error.")) << "\n";
                 break;
+            }
+            case static_cast<uint8_t>(OpCode::MOVE_CARD):
+            {
+                json payload = json::parse(packet.payload);
+                uint32_t cardID = payload.at("cardID").get<uint32_t>();
+                float newX = payload.at("x").get<float>();
+                float newY = payload.at("y").get<float>();
+                float newWidth = payload.at("width").get<float>();
+                float newHeight = payload.at("height").get<float>();
+                uint32_t newZ = payload.at("zIndex").get<uint32_t>();
+                if (board.cards.find(cardID) != board.cards.end()) 
+                {
+                    board.cards[cardID].x = newX;
+                    board.cards[cardID].y = newY;
+                    board.cards[cardID].width = newWidth;
+                    board.cards[cardID].height = newHeight;
+                    board.cards[cardID].zIndex = newZ;
+                }
+                break;
+            }
+            case static_cast<uint8_t>(OpCode::EDIT_CARD_CONTENT):
+            {
+              json payload = json::parse(packet.payload);
+              uint32_t cardID = payload.at("cardID").get<uint32_t>();
+
+              auto it = board.cards.find(cardID);
+              if (it == board.cards.end()) 
+              {
+                cerr << "[ERROR] : EDIT_CARD_CONTENT for unknown card ID " << cardID << "\n";
+                break;
+              }
+
+              Card& card = it->second;
+
+              if (payload.contains("text"))
+                card.text = payload.at("text").get<string>();
+              if (payload.contains("mediaURL"))
+                card.mediaURL = payload.at("mediaURL").get<string>();
+              if (payload.contains("color"))
+                card.color = payload.at("color").get<Color>();
+              if (payload.contains("x"))
+                card.x = payload.at("x").get<float>();
+              if (payload.contains("y"))
+                card.y = payload.at("y").get<float>();
+              if (payload.contains("width"))
+                card.width = payload.at("width").get<float>();
+              if (payload.contains("height"))
+                card.height = payload.at("height").get<float>();
+              if (payload.contains("zIndex"))
+                card.zIndex = payload.at("zIndex").get<uint32_t>();
+              break;
+            }
+            case static_cast<uint8_t>(OpCode::DELETE_CARD):
+            {
+              json payload = json::parse(packet.payload);
+              uint32_t cardID = payload.at("cardID").get<uint32_t>();
+              if (!board.deleteCard(cardID))
+              {
+                cerr << "[ERROR] : DELETE_CARD for unknown card ID " << cardID << "\n";
+              }
+              break;
+            }
+            case static_cast<uint8_t>(OpCode::EDIT_CONNECTOR):
+            {
+              const json payload = json::parse(packet.payload);
+              const uint32_t connectorID = payload.at("connectorID").get<uint32_t>();
+
+              auto it = board.connectors.find(connectorID);
+              if (it == board.connectors.end()) {
+                cerr << "[ERROR] : EDIT_CONNECTOR for unknown connector ID "
+                  << connectorID << "\n";
+                break;
+              }
+              if (payload.contains("thickness")) {
+                it->second.thickness = payload.at("thickness").get<float>();
+              }
+              if (payload.contains("color")) {
+                const json& colorJSON = payload.at("color");
+                Color updated = it->second.color;
+
+                auto updateChannel = [&colorJSON](const char* name, uint8_t& channel) {
+                  if (!colorJSON.contains(name)) return;
+
+                  const int value = colorJSON.at(name).get<int>();
+                  if (value < 0 || value > 255) {
+                    throw runtime_error(string("Invalid color channel: ") + name);
+                  }
+                    channel = static_cast<uint8_t>(value);
+                };
+
+                updateChannel("r", updated.r);
+                updateChannel("g", updated.g);
+                updateChannel("b", updated.b);
+                updateChannel("a", updated.a);
+
+                it->second.color = updated;
+              }
+              break;
+            }
+            case static_cast<uint8_t>(OpCode::DELETE_CONNECTOR):
+            {
+              const json payload = json::parse(packet.payload);
+              const uint32_t connectorID = payload.at("connectorID").get<uint32_t>();
+
+              if (!board.deleteConnector(connectorID)) {
+                cerr << "[ERROR] : DELETE_CONNECTOR for unknown connector ID " << connectorID << "\n";
+              }
+              break;
+            }
+            case static_cast<uint8_t>(OpCode::DELETE_OBJECTS):
+            {
+              const json payload = json::parse(packet.payload);
+              const auto& objects = payload.at("objects");
+
+              if (!objects.is_array()) {
+                throw std::runtime_error("DELETE_OBJECTS objects must be an array");
+              }
+              for (const auto& object : objects) {
+                if (object.at("type").get<string>() == "connector") {
+                  const uint32_t id = object.at("id").get<uint32_t>();
+                  if (!board.deleteConnector(id)) {
+                    cerr << "[ERROR] : DELETE_OBJECTS referenced unknown connector ID " << id << "\n";
+                  }
+                }
+              }
+              for (const auto& object : objects) {
+                if (object.at("type").get<string>() == "card") {
+                  const uint32_t id = object.at("id").get<uint32_t>();
+                  if (!board.deleteCard(id)) {
+                    cerr << "[ERROR] : DELETE_OBJECTS referenced unknown card ID " << id << "\n";
+                  }
+                }
+              }
+              break;
+            }
+            case static_cast<uint8_t>(OpCode::EDIT_BOARD_THEME):
+            {
+              const json payload = json::parse(packet.payload);
+              const string field = payload.at("field").get<string>();
+
+              Color* target = nullptr;
+              if (field == "boardBackgroundColor") target = &board.theme.boardBackgroundColor;
+              else if (field == "cardColor") target = &board.theme.cardColor;
+              else if (field == "connectorColor") target = &board.theme.connectorColor;
+              else if (field == "accentColor") target = &board.theme.accentColor;
+              else if (field == "importantElements") target = &board.theme.importantElements;
+
+              if (!target) {
+                throw runtime_error("Unknown board theme field: " + field);
+              }
+
+              const json& color = payload.at("color");
+              auto updateChannel = [&color](const char* name, uint8_t& channel) {
+                if (!color.contains(name)) return;
+
+                const int value = color.at(name).get<int>();
+                if (value < 0 || value > 255) {
+                  throw runtime_error(string("Invalid color channel: ") + name);
+                }
+                channel = static_cast<uint8_t>(value);
+              };
+
+              updateChannel("r", target->r);
+              updateChannel("g", target->g);
+              updateChannel("b", target->b);
+              updateChannel("a", target->a);
+              break;
+            }
+            case static_cast<uint8_t>(OpCode::BRING_CARD_TO_FRONT):
+            {
+              const json payload = json::parse(packet.payload);
+              const uint32_t cardID = payload.at("cardID").get<uint32_t>();
+
+              if (board.cards.find(cardID) == board.cards.end()) {
+                cerr << "[ERROR] : BRING_CARD_TO_FRONT for unknown card ID " << cardID << "\n";
+                break;
+              }
+
+              board.bringCardToFront(cardID);
+              break;
             }
             default:
                 break;
@@ -313,21 +495,9 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
 int main(int argc, char *argv[])
 {
   std::cout << "[DEBUG] Main started! argc = " << argc << "\n" << std::flush;
-  if (argc < 2 || argc > 3) {
-    std::cerr << "Usage: " << argv[0] << " <server_ip> [port]\n";
+  if (argc < 2) {
+    std::cerr << "Usage: " << argv[0] << " <server_ip>\n";
     return 1;
-  }
-
-  int serverPort = DEFAULT_SERVER_PORT;
-  if (argc == 3) {
-    char* portEnd = nullptr;
-    errno = 0;
-    const long parsedPort = std::strtol(argv[2], &portEnd, 10);
-    if (errno != 0 || portEnd == argv[2] || *portEnd != '\0' || parsedPort < 1 || parsedPort > 65535) {
-      std::cerr << "[ERROR] : Port must be a number between 1 and 65535.\n";
-      return 1;
-    }
-    serverPort = static_cast<int>(parsedPort);
   }
 
   struct sockaddr_in sin;
@@ -344,7 +514,7 @@ int main(int argc, char *argv[])
   bzero((char *)&sin, sizeof(sin));
   sin.sin_family = AF_INET;
   sin.sin_addr.s_addr = inet_addr(argv[1]);
-  sin.sin_port = htons(serverPort);
+  sin.sin_port = htons(SERVER_PORT);
 
   //connects to server
   if (connect(s, (struct sockaddr *)&sin, sizeof(sin)) < 0)
