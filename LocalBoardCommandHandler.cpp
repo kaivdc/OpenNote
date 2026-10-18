@@ -5,7 +5,13 @@ LocalBoardCommandHandler::LocalBoardCommandHandler(BoardState& board) : board(bo
 
 // Sends a board command to the matching local handler
 void LocalBoardCommandHandler::handle(const BoardCommand& command) {
+    if (!boardReady) return;
     std::visit([this](const auto& typedCommand) { apply(typedCommand); }, command);
+}
+
+// Enables board commands after the server snapshot is loaded
+void LocalBoardCommandHandler::setBoardReady(bool ready) {
+    boardReady = ready;
 }
 
 // Creates a card on the local board

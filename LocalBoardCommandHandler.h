@@ -7,9 +7,11 @@ class LocalBoardCommandHandler final : public BoardCommandHandler {
 public:
     explicit LocalBoardCommandHandler(BoardState& board);
     void handle(const BoardCommand& command) override;
+    void setBoardReady(bool ready);
 
 private:
     BoardState& board;
+    bool boardReady = true;
 
     void apply(const CreateCardCommand& command);
     void apply(const DeleteCardCommand& command);
