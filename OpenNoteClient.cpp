@@ -53,7 +53,7 @@ bool readExact(int sock, char* buffer, size_t bytesToRead) {
 }
 
 // Read Packet -- Need to move later
-void clientReveivingLoop(long childSocket)
+void clientReceivingLoop(long childSocket)
 {
     char headerBuf[5];
 
@@ -93,28 +93,57 @@ void clientReveivingLoop(long childSocket)
                     switch (msgType) {
                         case static_cast<uint8_t>(OpCode::HEARTBEAT): // HEARTBEAT (ping/pong)
                         {
-                            std::cout << "[Client] : Received HEARTBEAT\n";
-                            break;
-                        }
-                        case static_cast<uint8_t>(OpCode::AUTH_REQ): // AUTH_REQ
-                        {
-                            std::cout << "[Client] : Received AUTH_REQ: " << payloadStr << "\n";
-                            break;
+                          std::cout << "[Client] : Received HEARTBEAT\n";
+                          break;
                         }
                         case static_cast<uint8_t>(OpCode::MOVE_CARD): // MOVE_CARD
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::EDIT_CARD_CONTENT): // EDIT_CARD_CONTENT
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::CREATE_CARD): // CREATE_CARD
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::DELETE_CARD): // DELETE_CARD
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::CREATE_CONNECTOR): // CREATE_CONNECTOR
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::EDIT_CONNECTOR): // EDIT_CONNECTOR
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::DELETE_CONNECTOR): // DELETE_CONNECTOR
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::DELETE_OBJECTS):
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::EDIT_BOARD_THEME):
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::BRING_CARD_TO_FRONT):
+                        {
+                          break;
+                        }
                         case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
                         {
                             std::cout << "[Client] : Received explicit DISCONNECT\n";
                             return;
+                        }
+                        case static_cast<uint8_t>(OpCode::SYNC_BOARD): // SYNC_BOARD
+                        {
+                            break;
                         }
                         default:
                         {
@@ -161,8 +190,6 @@ int main(int argc, char *argv[])
   }
   std::cout << "[CLIENT] :  Connected to OpenNote Server successfully!\n";
 
-  std::thread receivingThread(clientReveivingLoop, (long)s);
-
     Settings user_settings;
     user_settings.loadFromFile("settings.json");
 
@@ -182,14 +209,11 @@ int main(int argc, char *argv[])
     LocalBoardCommandHandler localCommandHandler(localBoard);
     
     // Start receiving thread
-    try
-    {
-        std::thread receivingThread(clientReveivingLoop, (long)s);
-        receivingThread.detach();
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "[ERROR] :  Failed to create receiving thread.\n";
+    std::thread receivingThread;
+    try {
+        receivingThread = std::thread(clientReceivingLoop, static_cast<long>(s));
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] Failed to create receiving thread: " << e.what() << "\n";
         close(s);
         return 1;
     }
