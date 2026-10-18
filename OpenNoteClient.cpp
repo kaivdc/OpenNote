@@ -25,7 +25,7 @@
 using namespace std;
 using json = nlohmann::json;
 
-#define SERVER_PORT 5432
+constexpr int DEFAULT_SERVER_PORT = 5432; // default port when no port is provided
 #define MAX_LINE 256
 #define STDIN 0
 #define VERSION "0.0.1"
@@ -313,9 +313,21 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
 int main(int argc, char *argv[])
 {
   std::cout << "[DEBUG] Main started! argc = " << argc << "\n" << std::flush;
-  if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <server_ip>\n";
+  if (argc < 2 || argc > 3) {
+    std::cerr << "Usage: " << argv[0] << " <server_ip> [port]\n";
     return 1;
+  }
+
+  int serverPort = DEFAULT_SERVER_PORT;
+  if (argc == 3) {
+    char* portEnd = nullptr;
+    errno = 0;
+    const long parsedPort = std::strtol(argv[2], &portEnd, 10);
+    if (errno != 0 || portEnd == argv[2] || *portEnd != '\0' || parsedPort < 1 || parsedPort > 65535) {
+      std::cerr << "[ERROR] : Port must be a number between 1 and 65535.\n";
+      return 1;
+    }
+    serverPort = static_cast<int>(parsedPort);
   }
 
   struct sockaddr_in sin;
@@ -332,7 +344,7 @@ int main(int argc, char *argv[])
   bzero((char *)&sin, sizeof(sin));
   sin.sin_family = AF_INET;
   sin.sin_addr.s_addr = inet_addr(argv[1]);
-  sin.sin_port = htons(SERVER_PORT);
+  sin.sin_port = htons(serverPort);
 
   //connects to server
   if (connect(s, (struct sockaddr *)&sin, sizeof(sin)) < 0)

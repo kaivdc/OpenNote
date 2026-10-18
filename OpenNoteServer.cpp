@@ -32,7 +32,7 @@
 using namespace std;
 using json = nlohmann::json;
 
-#define PORT 5432 // port we're listening on
+constexpr int DEFAULT_SERVER_PORT = 5432; // default port when no port is provided
 #define MAX_LINE 256
 
 fd_set master; // master file descriptor list
@@ -251,7 +251,7 @@ void sendError(int sock, int errCode, const string& errorMsg, const string& requ
 }
 
 // Starts the server listener and accepts client connections
-int main(void)
+int main(int argc, char* argv[])
 {
     struct sockaddr_in myaddr;     // server address
     struct sockaddr_in remoteaddr; // client address
@@ -262,7 +262,23 @@ int main(void)
     if (!openServerLog()) {
         logServerMessage("WARN", "Could not open opennote.log; writing server messages to the console only");
     }
-    logServerMessage("INFO", "Server starting");
+
+    int serverPort = DEFAULT_SERVER_PORT;
+    if (argc > 2) {
+        logServerMessage("ERROR", "Usage: OpenNoteServer [port]");
+        return 1;
+    }
+    if (argc == 2) {
+        char* portEnd = nullptr;
+        errno = 0;
+        const long parsedPort = strtol(argv[1], &portEnd, 10);
+        if (errno != 0 || portEnd == argv[1] || *portEnd != '\0' || parsedPort < 1 || parsedPort > 65535) {
+            logServerMessage("ERROR", "Port must be a number between 1 and 65535.");
+            return 1;
+        }
+        serverPort = static_cast<int>(parsedPort);
+    }
+    logServerMessage("INFO", "Server starting port=" + to_string(serverPort));
 
     if (!boardDatabase.open("opennote.db") || !boardDatabase.initialize()) {
         logServerMessage("ERROR", "Could not initialize the board database");
@@ -291,7 +307,7 @@ int main(void)
     // bind
     myaddr.sin_family = AF_INET;
     myaddr.sin_addr.s_addr = INADDR_ANY;
-    myaddr.sin_port = htons(PORT);
+    myaddr.sin_port = htons(serverPort);
     memset(&(myaddr.sin_zero), '\0', 8);
     if (::bind(listener, (struct sockaddr *)&myaddr, sizeof(myaddr)) == -1)
     {
@@ -318,7 +334,7 @@ int main(void)
 
     signal(SIGINT, stopServer);
     signal(SIGTERM, stopServer);
-    logServerMessage("INFO", "Server listening address=0.0.0.0 port=" + to_string(PORT));
+    logServerMessage("INFO", "Server listening address=0.0.0.0 port=" + to_string(serverPort));
 
     addrlen = sizeof(remoteaddr);
 
