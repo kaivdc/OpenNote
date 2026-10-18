@@ -14,12 +14,14 @@
 #include <arpa/inet.h>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 #include <system_error>
 #include <cstring>
 #include <cstdlib>
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <nlohmann/json.hpp>
 
 #include "BoardStructs.h"
@@ -44,12 +46,21 @@ unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a acti
 BoardDatabase boardDatabase;
 mutex stateMutex;
 mutex packetWriteMutex;
+mutex clientSocketsMutex;
+unordered_set<int> activeClientSockets;
+bool serverShuttingDown = false;
+mutex clientThreadsMutex;
+condition_variable clientThreadsFinished;
+size_t activeClientThreads = 0;
 
 bool handleSyncBoard(int clientSocket, const std::string& payloadStr);
 void handleBoardCommand(int clientSocket, OpCode opcode, const std::string& payloadStr);
 
 void broadcastToClients(const std::vector<int>& clients, int senderSocket, uint8_t msgType, const std::string& payloadStr, bool includeSender);
 void cleanupClientSession(int clientSocket, const string& disconnectReason);
+void stopClientConnections();
+void waitForClientThreads();
+void finishClientThread();
 bool readExact(int sock, char* buffer, size_t bytesToRead);
 bool sendPacket(int sock, uint8_t msgType, const std::string& payloadStr);
 void sendError(int sock, int errCode, const std::string& errorMsg, const string& requestType);
@@ -158,6 +169,7 @@ void ChildThread(long childSocket)
                         {
                             logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=DISCONNECT outcome=received");
                             cleanupClientSession(childSocket, "client_request");
+                            finishClientThread();
                             return;
                         }
                         default:
@@ -171,6 +183,7 @@ void ChildThread(long childSocket)
         }
     }
     cleanupClientSession(childSocket, "connection_closed");
+    finishClientThread();
 }
 
 
@@ -263,14 +276,16 @@ int main(void)
     if ((listener = socket(AF_INET, SOCK_STREAM, 0)) == -1)
     {
         logServerMessage("ERROR", string("socket failed: ") + strerror(errno));
-        exit(1);
+        return 1;
     }
 
     // lose the pesky "address already in use" error message
     if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
     {
         logServerMessage("ERROR", string("setsockopt failed: ") + strerror(errno));
-        exit(1);
+        close(listener);
+        listener = -1;
+        return 1;
     }
 
     // bind
@@ -281,14 +296,18 @@ int main(void)
     if (::bind(listener, (struct sockaddr *)&myaddr, sizeof(myaddr)) == -1)
     {
         logServerMessage("ERROR", string("bind failed: ") + strerror(errno));
-        exit(1);
+        close(listener);
+        listener = -1;
+        return 1;
     }
 
     // listen
     if (listen(listener, 10) == -1)
     {
         logServerMessage("ERROR", string("listen failed: ") + strerror(errno));
-        exit(1);
+        close(listener);
+        listener = -1;
+        return 1;
     }
 
     // add the listener to the master set
@@ -325,8 +344,16 @@ int main(void)
                     fdmax = newfd;
                 }
             }
+            {
+                lock_guard<mutex> lock(clientSocketsMutex);
+                activeClientSockets.insert(newfd);
+            }
             logServerMessage("INFO", "clientSocket=" + to_string(newfd) + " event=connected address=" + inet_ntoa(remoteaddr.sin_addr));
 
+            {
+                lock_guard<mutex> lock(clientThreadsMutex);
+                activeClientThreads++;
+            }
             try
             {
                 thread cThread(ChildThread, (long)newfd);
@@ -336,6 +363,7 @@ int main(void)
             {
                 logServerMessage("ERROR", string("Client thread creation failed: ") + e.what());
                 cleanupClientSession(newfd, "thread_creation_failed");
+                finishClientThread();
             }
         }
     }
@@ -343,11 +371,10 @@ int main(void)
         close(listener);
     }
     listener = -1;
+    stopClientConnections();
+    waitForClientThreads();
     logServerMessage("INFO", "Server shutting down");
-    if (serverStopping) {
-        std::_Exit(0);
-    }
-    return 1;
+    return serverStopping ? 0 : 1;
 }
 
 // Returns the board assigned to a client while the state lock is held
@@ -417,6 +444,7 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
 void cleanupClientSession(int clientSocket, const string& disconnectReason) {
     vector<int> clients;
     uint32_t boardID = 0;
+    bool notifyOtherClients = true;
 
     {
         lock_guard<mutex> lock(stateMutex);
@@ -439,17 +467,51 @@ void cleanupClientSession(int clientSocket, const string& disconnectReason) {
         }
     }
 
-    close(clientSocket);
+    {
+        lock_guard<mutex> lock(clientSocketsMutex);
+        activeClientSockets.erase(clientSocket);
+        notifyOtherClients = !serverShuttingDown;
+        close(clientSocket);
+    }
 
     logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " event=disconnected reason=" +
                      disconnectReason + " boardID=" + to_string(boardID));
 
-    if (boardID != 0) {
+    if (boardID != 0 && notifyOtherClients) {
         nlohmann::json leavePayload = {
             {"clientSocket", clientSocket},
             {"boardID", boardID}
         };
         broadcastToClients(clients, -1, static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED), leavePayload.dump(), false);
+    }
+}
+
+// Shuts down active client sockets so their threads can finish
+void stopClientConnections() {
+    lock_guard<mutex> lock(clientSocketsMutex);
+    serverShuttingDown = true;
+    for (int clientSocket : activeClientSockets) {
+        if (shutdown(clientSocket, SHUT_RDWR) == -1 && errno != ENOTCONN) {
+            logServerMessage("WARN", "clientSocket=" + to_string(clientSocket) +
+                             " shutdown failed: " + strerror(errno));
+        }
+    }
+}
+
+// Waits until all client threads have cleaned up their sessions
+void waitForClientThreads() {
+    unique_lock<mutex> lock(clientThreadsMutex);
+    clientThreadsFinished.wait(lock, [] { return activeClientThreads == 0; });
+}
+
+// Marks one client thread as finished and wakes the server when none remain
+void finishClientThread() {
+    lock_guard<mutex> lock(clientThreadsMutex);
+    if (activeClientThreads > 0) {
+        activeClientThreads--;
+    }
+    if (activeClientThreads == 0) {
+        clientThreadsFinished.notify_all();
     }
 }
 
