@@ -1,5 +1,7 @@
 # OpenNote
 OpenNote is a self-hostable virtual whiteboarding application consisting of a self-hostable server executable, and a client executable, capable of accessing any server and navigating its list of boards. These boards update as the client creates changes, exercising server-side authority and saving/loading form a database.
+[Github Repository]<https://github.com/kaivdc/OpenNote/>
+
 
 ## Team Members
 Kairos VanDeCar
