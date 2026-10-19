@@ -127,6 +127,8 @@ This is an `ERROR` payload. The opcode is `0xFF`. error codes and messages expla
 
 Build with `make`, then start the server and client using the commands above. Test board selection and saving, card and connector operations, image file and URL uploads, and restoring a board after a server restart. Most test cases can be easily conducted through the use of the context menu (right click on background, card, or connector), or keyboard shortcuts.
 
+Run the protocol test script after building with `python3 tests/protocol_runner.py`. It starts the server with a fresh database in a separate temporary folder. It saves test results, server console output, and the timestamped server log in that folder. Test results are produced by the script and are separate from server output. Use `--server`, `--port`, or `--output-dir` to set the server program, port, or output folder. IMPORTANT NOTE: This test script was written with the support of an AI chatbot ChatGPT unfortunately (Due to time crunch, my hand was forced). This test script was not fully generated, and the chatbot only served a supplemental role.
+
 ### Context Menu Options
 | Where you right-click | Option | What it does |
 |---|---|---|

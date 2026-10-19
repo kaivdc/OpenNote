@@ -1,0 +1,568 @@
+2026-10-18T00:51:40 [INFO] : Server starting port=5432
+2026-10-18T00:51:40 [INFO] : Board database ready
+2026-10-18T00:51:40 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T00:51:41 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T00:51:42 [INFO] : clientSocket=6 boardID=1 request=SYNC_BOARD outcome=success
+2026-10-18T00:52:07 [INFO] : clientSocket=6 boardID=1 request=CREATE_CARD outcome=success
+2026-10-18T00:52:07 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:52:07 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:52:10 [INFO] : clientSocket=6 boardID=1 request=CREATE_CARD outcome=success
+2026-10-18T00:52:39 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:52:39 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:52:42 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:52:42 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:52:43 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:52:43 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:52:43 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:52:43 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:52:45 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:52:45 [INFO] : clientSocket=6 boardID=1 request=CREATE_CONNECTOR outcome=success
+2026-10-18T00:52:45 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:52:51 [INFO] : clientSocket=6 boardID=1 request=EDIT_CONNECTOR outcome=success
+2026-10-18T00:52:54 [INFO] : clientSocket=6 boardID=1 request=EDIT_CONNECTOR outcome=success
+2026-10-18T00:52:57 [INFO] : clientSocket=6 boardID=1 request=EDIT_CONNECTOR outcome=success
+2026-10-18T00:52:59 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:52:59 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:53:00 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:53:02 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:53:03 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:53:03 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:53:39 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:53:40 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:53:40 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:53:41 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:53:55 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:53:55 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:53:57 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:53:57 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:01 [INFO] : clientSocket=6 boardID=1 request=DELETE_OBJECTS outcome=success
+2026-10-18T00:54:02 [INFO] : clientSocket=6 boardID=1 request=DELETE_OBJECTS outcome=success
+2026-10-18T00:54:04 [INFO] : clientSocket=6 boardID=1 request=CREATE_CARD outcome=success
+2026-10-18T00:54:05 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:05 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:05 [INFO] : clientSocket=6 boardID=1 request=DELETE_OBJECTS outcome=success
+2026-10-18T00:54:07 [INFO] : clientSocket=6 boardID=1 request=CREATE_CARD outcome=success
+2026-10-18T00:54:07 [INFO] : clientSocket=6 boardID=1 request=CREATE_CARD outcome=success
+2026-10-18T00:54:08 [INFO] : clientSocket=6 boardID=1 request=CREATE_CARD outcome=success
+2026-10-18T00:54:09 [INFO] : clientSocket=6 boardID=1 request=CREATE_CARD outcome=success
+2026-10-18T00:54:09 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:10 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:10 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:10 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:11 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:11 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:12 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:12 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:13 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:13 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:15 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:15 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:15 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:18 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:18 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:18 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:20 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:20 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:20 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:21 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:44 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:44 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:45 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:45 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:45 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:45 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:54:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:49 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:54:53 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:54:53 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:10 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:11 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:12 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:13 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:14 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:15 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:15 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:15 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:16 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:16 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:16 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:16 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:17 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:17 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:17 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:17 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:18 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:18 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:19 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:19 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:19 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:19 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:20 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:20 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:46 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:46 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:47 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:47 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:48 [INFO] : clientSocket=6 boardID=1 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T00:55:49 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:50 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:55:51 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:55:53 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:56:05 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:56:05 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:56:06 [INFO] : clientSocket=6 boardID=1 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T00:56:07 [INFO] : clientSocket=6 boardID=1 request=MOVE_CARD outcome=success
+2026-10-18T00:56:12 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T00:56:12 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=1
+2026-10-18T00:56:13 [INFO] : Server shutting down
+2026-10-18T01:10:29 [INFO] : Server starting port=5432
+2026-10-18T01:10:29 [INFO] : Board database ready
+2026-10-18T01:10:29 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T01:10:30 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:10:31 [INFO] : clientSocket=6 boardID=1 request=SYNC_BOARD outcome=success
+2026-10-18T01:18:43 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:18:43 [INFO] : boardID=1 event=board_saved reason=last_client_disconnected
+2026-10-18T01:18:43 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=1
+2026-10-18T01:18:44 [INFO] : boardID=1 event=board_saved reason=server_shutdown
+2026-10-18T01:18:44 [INFO] : Server shutting down
+2026-10-18T01:18:59 [INFO] : Server starting port=5432
+2026-10-18T01:18:59 [INFO] : Board database ready
+2026-10-18T01:18:59 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T01:19:00 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:19:01 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:24:10 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:24:10 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:24:10 [INFO] : Server shutting down
+2026-10-18T01:24:29 [INFO] : Server starting port=5432
+2026-10-18T01:24:30 [INFO] : Board database ready
+2026-10-18T01:24:30 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T01:24:30 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:24:31 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:24:42 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:24:43 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:24:53 [INFO] : clientSocket=6 boardID=2 request=CREATE_BOARD outcome=success
+2026-10-18T01:24:53 [INFO] : clientSocket=6 boardID=2 request=SYNC_BOARD outcome=success
+2026-10-18T01:24:55 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:24:57 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:24:57 [INFO] : boardID=2 event=board_saved reason=last_client_disconnected
+2026-10-18T01:24:57 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=2
+2026-10-18T01:24:57 [INFO] : boardID=2 event=board_saved reason=server_shutdown
+2026-10-18T01:24:57 [INFO] : Server shutting down
+2026-10-18T01:26:19 [INFO] : Server starting port=55321
+2026-10-18T01:26:19 [INFO] : Board database ready
+2026-10-18T01:26:19 [INFO] : Server listening address=0.0.0.0 port=55321
+2026-10-18T01:26:30 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:26:31 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:26:38 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:26:38 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:27:58 [INFO] : clientSocket=8 event=connected address=127.0.0.1
+2026-10-18T01:27:59 [INFO] : clientSocket=8 request=LIST_BOARDS outcome=success
+2026-10-18T01:28:03 [INFO] : clientSocket=8 event=connection_ended reason=header_read_failed
+2026-10-18T01:28:03 [INFO] : clientSocket=8 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:28:06 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:28:06 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:28:11 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:28:11 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:28:59 [INFO] : clientSocket=8 event=connected address=127.0.0.1
+2026-10-18T01:28:59 [INFO] : clientSocket=8 request=LIST_BOARDS outcome=success
+2026-10-18T01:29:04 [INFO] : clientSocket=8 event=connection_ended reason=header_read_failed
+2026-10-18T01:29:04 [INFO] : clientSocket=8 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:29:40 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:29:41 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:29:45 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:29:45 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:29:59 [INFO] : Server shutting down
+2026-10-18T01:31:26 [INFO] : Server starting port=5432
+2026-10-18T01:31:26 [INFO] : Board database ready
+2026-10-18T01:31:26 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T01:31:27 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:31:28 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:31:54 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:31:54 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:31:54 [INFO] : Server shutting down
+2026-10-18T01:41:24 [INFO] : Server starting port=5432
+2026-10-18T01:41:24 [INFO] : Board database ready
+2026-10-18T01:41:24 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T01:41:25 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:41:26 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:44:56 [INFO] : clientSocket=6 boardID=2 request=SYNC_BOARD outcome=success
+2026-10-18T01:45:35 [INFO] : clientSocket=6 boardID=2 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T01:45:38 [INFO] : clientSocket=6 boardID=2 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T01:45:41 [INFO] : clientSocket=6 boardID=2 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T01:45:42 [INFO] : clientSocket=6 boardID=2 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T01:45:44 [INFO] : clientSocket=6 boardID=2 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T01:45:46 [INFO] : clientSocket=6 boardID=2 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T01:45:48 [INFO] : clientSocket=6 boardID=2 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T01:45:54 [INFO] : clientSocket=6 boardID=2 request=SAVE_BOARD outcome=success
+2026-10-18T01:45:56 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:48:36 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:48:36 [INFO] : boardID=2 event=board_saved reason=last_client_disconnected
+2026-10-18T01:48:36 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=2
+2026-10-18T01:48:37 [INFO] : boardID=2 event=board_saved reason=server_shutdown
+2026-10-18T01:48:37 [INFO] : Server shutting down
+2026-10-18T01:49:00 [INFO] : Server starting port=5432
+2026-10-18T01:49:00 [INFO] : Board database ready
+2026-10-18T01:49:00 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T01:49:00 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:49:01 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:54:37 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:54:37 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:54:37 [INFO] : Server shutting down
+2026-10-18T01:56:49 [INFO] : Server starting port=5432
+2026-10-18T01:56:49 [INFO] : Board database ready
+2026-10-18T01:56:49 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T01:56:49 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T01:56:50 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T01:57:12 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T01:57:12 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T01:57:12 [INFO] : Server shutting down
+2026-10-18T02:05:53 [INFO] : Server starting port=5432
+2026-10-18T02:05:53 [INFO] : Board database ready
+2026-10-18T02:05:53 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T02:05:53 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T02:05:55 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:06:19 [INFO] : clientSocket=6 boardID=3 request=CREATE_BOARD outcome=success
+2026-10-18T02:06:19 [INFO] : clientSocket=6 boardID=3 request=SYNC_BOARD outcome=success
+2026-10-18T02:07:12 [INFO] : clientSocket=6 boardID=3 request=SAVE_BOARD outcome=success
+2026-10-18T02:07:14 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:10:09 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T02:10:09 [INFO] : boardID=3 event=board_saved reason=last_client_disconnected
+2026-10-18T02:10:09 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=3
+2026-10-18T02:10:09 [INFO] : boardID=3 event=board_saved reason=server_shutdown
+2026-10-18T02:10:09 [INFO] : Server shutting down
+2026-10-18T02:10:27 [INFO] : Server starting port=5432
+2026-10-18T02:10:27 [INFO] : Board database ready
+2026-10-18T02:10:27 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T02:10:27 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T02:10:30 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:12:13 [INFO] : clientSocket=6 boardID=4 request=CREATE_BOARD outcome=success
+2026-10-18T02:12:13 [INFO] : clientSocket=6 boardID=4 request=SYNC_BOARD outcome=success
+2026-10-18T02:12:24 [INFO] : clientSocket=6 boardID=4 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T02:12:27 [INFO] : clientSocket=6 boardID=4 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T02:12:31 [INFO] : clientSocket=6 boardID=4 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T02:12:34 [INFO] : clientSocket=6 boardID=4 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T02:12:38 [INFO] : clientSocket=6 boardID=4 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T02:12:45 [INFO] : clientSocket=6 boardID=4 request=SAVE_BOARD outcome=success
+2026-10-18T02:12:47 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:13:24 [INFO] : boardID=4 event=board_saved reason=last_client_left_board
+2026-10-18T02:13:24 [INFO] : clientSocket=6 boardID=1 request=SYNC_BOARD outcome=success
+2026-10-18T02:13:29 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:13:31 [INFO] : boardID=1 event=board_saved reason=last_client_left_board
+2026-10-18T02:13:31 [INFO] : clientSocket=6 boardID=4 request=SYNC_BOARD outcome=success
+2026-10-18T02:13:33 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:13:34 [INFO] : boardID=4 event=board_saved reason=last_client_left_board
+2026-10-18T02:13:34 [INFO] : clientSocket=6 boardID=2 request=SYNC_BOARD outcome=success
+2026-10-18T02:13:41 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:13:42 [INFO] : boardID=2 event=board_saved reason=last_client_left_board
+2026-10-18T02:13:42 [INFO] : clientSocket=6 boardID=1 request=SYNC_BOARD outcome=success
+2026-10-18T02:13:53 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:13:56 [INFO] : clientSocket=6 boardID=5 request=CREATE_BOARD outcome=success
+2026-10-18T02:13:56 [INFO] : boardID=1 event=board_saved reason=last_client_left_board
+2026-10-18T02:13:56 [INFO] : clientSocket=6 boardID=5 request=SYNC_BOARD outcome=success
+2026-10-18T02:14:00 [INFO] : clientSocket=6 boardID=5 request=SAVE_BOARD outcome=success
+2026-10-18T02:14:02 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:14:05 [INFO] : clientSocket=6 boardID=6 request=CREATE_BOARD outcome=success
+2026-10-18T02:14:05 [INFO] : boardID=5 event=board_saved reason=last_client_left_board
+2026-10-18T02:14:05 [INFO] : clientSocket=6 boardID=6 request=SYNC_BOARD outcome=success
+2026-10-18T02:14:09 [INFO] : clientSocket=6 boardID=6 request=SAVE_BOARD outcome=success
+2026-10-18T02:14:11 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:14:13 [INFO] : clientSocket=6 boardID=7 request=CREATE_BOARD outcome=success
+2026-10-18T02:14:13 [INFO] : boardID=6 event=board_saved reason=last_client_left_board
+2026-10-18T02:14:13 [INFO] : clientSocket=6 boardID=7 request=SYNC_BOARD outcome=success
+2026-10-18T02:14:17 [INFO] : clientSocket=6 boardID=7 request=SAVE_BOARD outcome=success
+2026-10-18T02:14:18 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:14:20 [INFO] : clientSocket=6 boardID=8 request=CREATE_BOARD outcome=success
+2026-10-18T02:14:20 [INFO] : boardID=7 event=board_saved reason=last_client_left_board
+2026-10-18T02:14:20 [INFO] : clientSocket=6 boardID=8 request=SYNC_BOARD outcome=success
+2026-10-18T02:14:36 [INFO] : clientSocket=6 boardID=8 request=SAVE_BOARD outcome=success
+2026-10-18T02:14:38 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:21:02 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T02:21:02 [INFO] : boardID=8 event=board_saved reason=last_client_disconnected
+2026-10-18T02:21:02 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=8
+2026-10-18T02:21:02 [INFO] : boardID=8 event=board_saved reason=server_shutdown
+2026-10-18T02:21:02 [INFO] : boardID=7 event=board_saved reason=server_shutdown
+2026-10-18T02:21:02 [INFO] : boardID=6 event=board_saved reason=server_shutdown
+2026-10-18T02:21:02 [INFO] : boardID=5 event=board_saved reason=server_shutdown
+2026-10-18T02:21:02 [INFO] : boardID=2 event=board_saved reason=server_shutdown
+2026-10-18T02:21:02 [INFO] : boardID=1 event=board_saved reason=server_shutdown
+2026-10-18T02:21:02 [INFO] : boardID=4 event=board_saved reason=server_shutdown
+2026-10-18T02:21:02 [INFO] : Server shutting down
+2026-10-18T02:21:17 [INFO] : Server starting port=5432
+2026-10-18T02:21:17 [INFO] : Board database ready
+2026-10-18T02:21:17 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T02:21:17 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T02:21:19 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T02:22:27 [INFO] : clientSocket=6 event=connection_ended reason=header_read_failed
+2026-10-18T02:22:27 [INFO] : clientSocket=6 event=disconnected reason=connection_closed boardID=0
+2026-10-18T02:22:27 [INFO] : Server shutting down
+2026-10-18T14:10:30 [INFO] : Server starting port=5432
+2026-10-18T14:10:30 [INFO] : Board database ready
+2026-10-18T14:10:30 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T14:10:31 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T14:10:32 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:10:45 [INFO] : clientSocket=6 boardID=3 request=SYNC_BOARD outcome=success
+2026-10-18T14:10:47 [INFO] : clientSocket=6 boardID=3 request=CREATE_CARD outcome=success
+2026-10-18T14:10:47 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:10:47 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:10:49 [INFO] : clientSocket=6 boardID=3 request=CREATE_CARD outcome=success
+2026-10-18T14:10:49 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:10:49 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:10:50 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:10:50 [INFO] : clientSocket=6 boardID=3 request=CREATE_CONNECTOR outcome=success
+2026-10-18T14:10:50 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:10:53 [INFO] : clientSocket=6 boardID=3 request=DELETE_OBJECTS outcome=success
+2026-10-18T14:10:54 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:10:54 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:10:54 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:10:54 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:10 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:11 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:17 [INFO] : clientSocket=6 boardID=3 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T14:11:27 [INFO] : clientSocket=6 boardID=3 request=EDIT_CARD_CONTENT outcome=success
+2026-10-18T14:11:29 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:29 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:30 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:31 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:31 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:34 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:35 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:35 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:36 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:36 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:37 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:37 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:37 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:38 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:39 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:39 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:40 [INFO] : clientSocket=6 boardID=3 request=CREATE_CARD outcome=success
+2026-10-18T14:11:40 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:40 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:41 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:42 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:42 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:43 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:43 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:44 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:44 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:45 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:45 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:45 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:46 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:46 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:47 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:47 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:48 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:48 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:48 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:48 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:49 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:11:49 [INFO] : clientSocket=6 boardID=3 request=CREATE_CONNECTOR outcome=success
+2026-10-18T14:11:49 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:11:53 [INFO] : clientSocket=6 boardID=3 request=EDIT_CONNECTOR outcome=success
+2026-10-18T14:12:03 [INFO] : clientSocket=6 boardID=3 request=EDIT_BOARD_THEME outcome=success
+2026-10-18T14:12:05 [INFO] : clientSocket=6 boardID=3 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:12:05 [INFO] : clientSocket=6 boardID=3 request=MOVE_CARD outcome=success
+2026-10-18T14:12:08 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:12 [INFO] : boardID=3 event=board_saved reason=last_client_left_board
+2026-10-18T14:12:12 [INFO] : clientSocket=6 boardID=2 request=SYNC_BOARD outcome=success
+2026-10-18T14:12:16 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:18 [INFO] : boardID=2 event=board_saved reason=last_client_left_board
+2026-10-18T14:12:18 [INFO] : clientSocket=6 boardID=4 request=SYNC_BOARD outcome=success
+2026-10-18T14:12:20 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:24 [INFO] : clientSocket=6 boardID=2 request=DELETE_BOARD outcome=success
+2026-10-18T14:12:24 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:26 [WARN] : clientSocket=6 request=DELETE_BOARD outcome=rejected errorCode=409 message=Cannot delete a board while clients are connected.
+2026-10-18T14:12:28 [WARN] : clientSocket=6 request=DELETE_BOARD outcome=rejected errorCode=409 message=Cannot delete a board while clients are connected.
+2026-10-18T14:12:33 [WARN] : clientSocket=6 request=DELETE_BOARD outcome=rejected errorCode=409 message=Cannot delete a board while clients are connected.
+2026-10-18T14:12:35 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:35 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:35 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:35 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:37 [INFO] : clientSocket=6 boardID=1 request=DELETE_BOARD outcome=success
+2026-10-18T14:12:37 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:39 [INFO] : clientSocket=6 boardID=5 request=DELETE_BOARD outcome=success
+2026-10-18T14:12:39 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:41 [WARN] : clientSocket=6 request=DELETE_BOARD outcome=rejected errorCode=409 message=Cannot delete a board while clients are connected.
+2026-10-18T14:12:43 [INFO] : clientSocket=6 boardID=6 request=DELETE_BOARD outcome=success
+2026-10-18T14:12:43 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:45 [INFO] : clientSocket=6 boardID=7 request=DELETE_BOARD outcome=success
+2026-10-18T14:12:45 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:48 [INFO] : clientSocket=6 boardID=8 request=DELETE_BOARD outcome=success
+2026-10-18T14:12:48 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:49 [WARN] : clientSocket=6 request=DELETE_BOARD outcome=rejected errorCode=409 message=Cannot delete a board while clients are connected.
+2026-10-18T14:12:51 [INFO] : clientSocket=6 boardID=3 request=DELETE_BOARD outcome=success
+2026-10-18T14:12:51 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:53 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:53 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:53 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:53 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:12:54 [INFO] : clientSocket=6 boardID=9 request=CREATE_BOARD outcome=success
+2026-10-18T14:12:54 [INFO] : boardID=4 event=board_saved reason=last_client_left_board
+2026-10-18T14:12:54 [INFO] : clientSocket=6 boardID=9 request=SYNC_BOARD outcome=success
+2026-10-18T14:12:57 [INFO] : clientSocket=6 boardID=9 request=CREATE_CARD outcome=success
+2026-10-18T14:12:58 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:12:58 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:12:58 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:00 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:01 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:02 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:02 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:03 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:03 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:03 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:04 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:04 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:04 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:05 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:05 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:05 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:06 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:06 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:06 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:07 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:07 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:07 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:08 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:09 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:10 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:10 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:11 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:11 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:48 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:48 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:50 [INFO] : clientSocket=6 boardID=9 request=CREATE_CARD outcome=success
+2026-10-18T14:13:51 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:51 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:52 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:52 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:53 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:53 [INFO] : clientSocket=6 boardID=9 request=CREATE_CONNECTOR outcome=success
+2026-10-18T14:13:53 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:13:54 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:13:54 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:15:51 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:15:51 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:15:52 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:15:52 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:15:54 [INFO] : clientSocket=6 boardID=9 request=DELETE_OBJECTS outcome=success
+2026-10-18T14:15:55 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:15:55 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:15:55 [INFO] : clientSocket=6 boardID=9 request=DELETE_OBJECTS outcome=success
+2026-10-18T14:15:56 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:15:56 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:15:57 [INFO] : clientSocket=6 boardID=9 request=DELETE_OBJECTS outcome=success
+2026-10-18T14:15:58 [INFO] : clientSocket=6 boardID=9 request=CREATE_CARD outcome=success
+2026-10-18T14:15:58 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:15:58 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:15:59 [INFO] : clientSocket=6 boardID=9 request=DELETE_OBJECTS outcome=success
+2026-10-18T14:16:19 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:16:25 [INFO] : clientSocket=6 boardID=4 request=DELETE_BOARD outcome=success
+2026-10-18T14:16:25 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:16:30 [WARN] : clientSocket=6 request=DELETE_BOARD outcome=rejected errorCode=409 message=Cannot delete a board while clients are connected.
+2026-10-18T14:17:01 [INFO] : clientSocket=6 request=DISCONNECT outcome=received
+2026-10-18T14:17:01 [INFO] : boardID=9 event=board_saved reason=last_client_disconnected
+2026-10-18T14:17:01 [INFO] : clientSocket=6 event=disconnected reason=client_request boardID=9
+2026-10-18T14:17:01 [INFO] : boardID=9 event=board_saved reason=server_shutdown
+2026-10-18T14:17:01 [INFO] : Server shutting down
+2026-10-18T14:22:49 [INFO] : Server starting port=5432
+2026-10-18T14:22:49 [INFO] : Board database ready
+2026-10-18T14:22:49 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T14:22:50 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T14:22:50 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:22:59 [INFO] : clientSocket=6 boardID=9 request=SYNC_BOARD outcome=success
+2026-10-18T14:23:00 [INFO] : clientSocket=6 boardID=9 request=CREATE_CARD outcome=success
+2026-10-18T14:23:00 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:00 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:01 [INFO] : clientSocket=6 boardID=9 request=CREATE_CARD outcome=success
+2026-10-18T14:23:02 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:02 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:04 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:04 [INFO] : clientSocket=6 boardID=9 request=CREATE_CONNECTOR outcome=success
+2026-10-18T14:23:04 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:07 [INFO] : clientSocket=6 boardID=9 request=CREATE_CARD outcome=success
+2026-10-18T14:23:08 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:08 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:09 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:09 [INFO] : clientSocket=6 boardID=9 request=CREATE_CONNECTOR outcome=success
+2026-10-18T14:23:09 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:10 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:10 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:11 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:11 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:18 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:18 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:19 [INFO] : clientSocket=6 boardID=9 request=DELETE_OBJECTS outcome=success
+2026-10-18T14:23:20 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:20 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:20 [INFO] : clientSocket=6 boardID=9 request=DELETE_OBJECTS outcome=success
+2026-10-18T14:23:30 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:30 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:31 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:32 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:23:33 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:23:34 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:22 [INFO] : clientSocket=6 request=DISCONNECT outcome=received
+2026-10-18T14:32:22 [INFO] : boardID=9 event=board_saved reason=last_client_disconnected
+2026-10-18T14:32:22 [INFO] : clientSocket=6 event=disconnected reason=client_request boardID=9
+2026-10-18T14:32:22 [INFO] : boardID=9 event=board_saved reason=server_shutdown
+2026-10-18T14:32:22 [INFO] : Server shutting down
+2026-10-18T14:32:34 [INFO] : Server starting port=5432
+2026-10-18T14:32:34 [INFO] : Board database ready
+2026-10-18T14:32:34 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T14:32:34 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T14:32:35 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:32:43 [INFO] : clientSocket=6 boardID=9 request=SYNC_BOARD outcome=success
+2026-10-18T14:32:44 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:44 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:45 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:45 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:46 [INFO] : clientSocket=6 boardID=9 request=CREATE_CARD outcome=success
+2026-10-18T14:32:46 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:46 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:47 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:47 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:48 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:48 [INFO] : clientSocket=6 boardID=9 request=CREATE_CONNECTOR outcome=success
+2026-10-18T14:32:48 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:49 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:49 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:53 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:53 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:53 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:32:53 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:32:57 [INFO] : clientSocket=6 request=DISCONNECT outcome=received
+2026-10-18T14:32:57 [INFO] : boardID=9 event=board_saved reason=last_client_disconnected
+2026-10-18T14:32:57 [INFO] : clientSocket=6 event=disconnected reason=client_request boardID=9
+2026-10-18T14:32:57 [INFO] : boardID=9 event=board_saved reason=server_shutdown
+2026-10-18T14:32:57 [INFO] : Server shutting down
+2026-10-18T14:34:25 [INFO] : Server starting port=5432
+2026-10-18T14:34:25 [INFO] : Board database ready
+2026-10-18T14:34:25 [INFO] : Server listening address=0.0.0.0 port=5432
+2026-10-18T14:34:26 [INFO] : clientSocket=6 event=connected address=127.0.0.1
+2026-10-18T14:34:26 [INFO] : clientSocket=6 request=LIST_BOARDS outcome=success
+2026-10-18T14:34:30 [INFO] : clientSocket=6 boardID=9 request=SYNC_BOARD outcome=success
+2026-10-18T14:34:31 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:34:31 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:34:32 [INFO] : clientSocket=6 boardID=9 request=BRING_CARD_TO_FRONT outcome=success
+2026-10-18T14:34:32 [INFO] : clientSocket=6 boardID=9 request=MOVE_CARD outcome=success
+2026-10-18T14:34:44 [INFO] : clientSocket=6 request=DISCONNECT outcome=received
+2026-10-18T14:34:44 [INFO] : boardID=9 event=board_saved reason=last_client_disconnected
+2026-10-18T14:34:44 [INFO] : clientSocket=6 event=disconnected reason=client_request boardID=9
+2026-10-18T14:34:44 [INFO] : boardID=9 event=board_saved reason=server_shutdown
+2026-10-18T14:34:44 [INFO] : Server shutting down
+2026-10-18T15:20:00 [ERROR] : Port must be a number between 1 and 65535.
