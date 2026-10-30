@@ -16,6 +16,8 @@
 using namespace std;
 
 constexpr std::size_t MAX_BOARD_NAME_LENGTH = 64;
+constexpr std::size_t MAX_CARD_TEXT_BYTES = 4096;
+constexpr std::size_t MAX_PACKET_PAYLOAD_BYTES = 10 * 1024 * 1024;
 
 enum class OpCode : uint8_t 
 {
@@ -151,7 +153,7 @@ Color getTextColor() const {
     }
 
     bool isValid() const {
-        return (cardID > 0 && width >= 0.0f && width <= 1000.0f && height >= 0.0f && height <= 1000.0f && text.length() <= 4096);
+        return (cardID > 0 && width >= 0.0f && width <= 1000.0f && height >= 0.0f && height <= 1000.0f && text.length() <= MAX_CARD_TEXT_BYTES);
     }
 };
 
@@ -182,6 +184,7 @@ using BoardList = map<string, BoardInfo>;
 
 struct BoardState {
     uint32_t boardID;
+    uint64_t revision = 0;
     string boardName;
     string createdAt;
     string lastEditedAt;

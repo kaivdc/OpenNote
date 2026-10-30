@@ -132,6 +132,8 @@ public:
     virtual ~BoardCommandHandler() = default;
     // Applies a board command using the active board handler
     virtual void handle(const BoardCommand& command) = 0;
+    // Sends a save-as request and reports whether it reached the socket
+    virtual bool sendSaveBoardAs(const std::string& boardName) = 0;
 };
 
 #endif

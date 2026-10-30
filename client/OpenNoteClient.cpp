@@ -11,6 +11,7 @@
 #include <bit>
 #include <cerrno>
 #include <exception>
+#include <chrono>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -45,6 +46,25 @@ Connector connectorFromJSON(const json& connectorJSON);
 bool replaceBoardFromSnapshot(BoardState& board, const json& snapshot);
 void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHandler,
                          ClientRenderer& renderer, const ReceivedPacket& packet);
+
+// Identifies packet types that carry a board revision
+bool isBoardMutationPacket(uint8_t opcode) {
+    switch (static_cast<OpCode>(opcode)) {
+        case OpCode::MOVE_CARD:
+        case OpCode::EDIT_CARD_CONTENT:
+        case OpCode::CREATE_CARD:
+        case OpCode::DELETE_CARD:
+        case OpCode::CREATE_CONNECTOR:
+        case OpCode::EDIT_CONNECTOR:
+        case OpCode::DELETE_CONNECTOR:
+        case OpCode::EDIT_BOARD_THEME:
+        case OpCode::DELETE_OBJECTS:
+        case OpCode::BRING_CARD_TO_FRONT:
+            return true;
+        default:
+            return false;
+    }
+}
 
 // Reads the requested number of bytes, handling partial TCP reads
 bool readExact(int sock, char* buffer, size_t bytesToRead) {
@@ -97,7 +117,7 @@ void clientReceivingLoop(long childSocket)
             // network to host
             uint32_t payloadLen = ntohl(networkLen);
 
-            if(payloadLen > 10 * 1024 * 1024) // if > 10 MB
+            if(payloadLen > MAX_PACKET_PAYLOAD_BYTES) // if > 10 MB
             {
                 cerr << "[ERROR] : Payload length exceeds 10MB. \n";
                 break;
@@ -256,6 +276,7 @@ bool replaceBoardFromSnapshot(BoardState& board, const json& snapshot) {
 
     BoardState updatedBoard;
     updatedBoard.boardID = snapshot.at("boardID").get<uint32_t>();
+    updatedBoard.revision = snapshot.value("revision", uint64_t{0});
     updatedBoard.boardName = snapshot.value("boardName", string{});
     updatedBoard.createdAt = snapshot.value("createdAt", string{});
     updatedBoard.lastEditedAt = snapshot.value("lastEditedAt", string{});
@@ -287,6 +308,41 @@ bool replaceBoardFromSnapshot(BoardState& board, const json& snapshot) {
 void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHandler,
                          ClientRenderer& renderer, const ReceivedPacket& packet) {
     try {
+        const bool hasBoardRevision = isBoardMutationPacket(packet.opcode) ||
+            packet.opcode == static_cast<uint8_t>(OpCode::BOARD_SAVED);
+        uint64_t receivedRevision = 0;
+        bool shouldApplyRevision = false;
+        if (hasBoardRevision) {
+            const json event = json::parse(packet.payload);
+            if (!event.is_object()) {
+                cerr << "[ERROR] : Board update was not a JSON object.\n";
+                return;
+            }
+            if (isBoardMutationPacket(packet.opcode) && !event.contains("boardID")) {
+                cerr << "[WARN] : Board update did not include a board ID. Requesting a fresh board snapshot.\n";
+                commandHandler.handle(JoinBoardCommand{board.boardID});
+                return;
+            }
+            if (event.contains("boardID") && event.at("boardID").get<uint32_t>() != board.boardID) {
+                return;
+            }
+            if (isBoardMutationPacket(packet.opcode) && !event.contains("revision")) {
+                cerr << "[WARN] : Board update did not include a revision. Requesting a fresh board snapshot.\n";
+                commandHandler.handle(JoinBoardCommand{board.boardID});
+                return;
+            }
+            if (event.contains("revision")) {
+                receivedRevision = event.at("revision").get<uint64_t>();
+                if (receivedRevision <= board.revision) return;
+                if (receivedRevision != board.revision + 1) {
+                    cerr << "[WARN] : Board update revision was missed. Requesting a fresh board snapshot.\n";
+                    commandHandler.handle(JoinBoardCommand{board.boardID});
+                    return;
+                }
+                shouldApplyRevision = true;
+            }
+        }
+
         switch (packet.opcode) {
             case static_cast<uint8_t>(OpCode::SYNC_BOARD): {
                 json snapshot = json::parse(packet.payload);
@@ -303,6 +359,9 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
             case static_cast<uint8_t>(OpCode::BOARD_SAVED): {
                 json payload = json::parse(packet.payload);
                 board.boardName = payload.value("boardName", board.boardName);
+                if (!payload.value("notification", false)) {
+                    renderer.confirmBoardSave(board.boardName);
+                }
                 cout << "[CLIENT] : Board saved as " << board.boardName << ".\n";
                 break;
             }
@@ -345,19 +404,24 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                 break;
             }
             case static_cast<uint8_t>(OpCode::CLIENT_CONNECTED):  {
+                if (json::parse(packet.payload).value("boardID", 0u) != board.boardID) break;
                 cout << "[CLIENT] : Another client connected to the board.\n";
                 break;
             }
             case static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED): {
+                if (json::parse(packet.payload).value("boardID", 0u) != board.boardID) break;
                 cout << "[CLIENT] : Another client disconnected from the board.\n";
                 break;
             }
             case static_cast<uint8_t>(OpCode::ERROR): {
                 json payload = json::parse(packet.payload);
-                cerr << "[ERROR] : Server rejected a command: "
-                     << payload.value("errorMsg", string("Unknown server error.")) << "\n";
-                if (board.boardID != 0) {
-                    commandHandler.setBoardReady(true);
+                const string errorMessage = payload.value("errorMsg", string("Unknown server error."));
+                const string requestType = payload.value("requestType", string{});
+                const bool saveBoardError = requestType == "SAVE_BOARD_AS";
+                cerr << "[ERROR] : Server rejected a command: " << errorMessage << "\n";
+                renderer.showServerError(errorMessage, saveBoardError);
+                if (requestType == "SYNC_BOARD" || requestType == "CREATE_BOARD") {
+                    commandHandler.clearPendingBoardRequest();
                 }
                 break;
             }
@@ -544,6 +608,7 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
             default:
                 break;
         }
+        if (shouldApplyRevision) board.revision = receivedRevision;
         renderer.confirmChange(packet.opcode, board);
     } catch (const exception& error) {
         cerr << "[ERROR] : Could not apply server packet: " << error.what() << "\n";
@@ -645,6 +710,7 @@ int main(int argc, char *argv[])
     }
 
     // Main rendering loop
+    auto nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     while (!renderer.shouldClose()) {
         queue<ReceivedPacket> pendingPackets = takeReceivedPackets();
         while (!pendingPackets.empty()) {
@@ -653,6 +719,10 @@ int main(int argc, char *argv[])
         }
 
         renderer.updateAndRender(localBoard, localCommandHandler);
+        if (std::chrono::steady_clock::now() >= nextHeartbeat) {
+            heartBeatPacket(s);
+            nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        }
     }
 
     if (!sendPacket(s, static_cast<uint8_t>(OpCode::DISCONNECT), json::object().dump())) {

@@ -212,6 +212,18 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
         inspector.drawSidebar(board, imageCache, commandHandler, selection, selectionSidebarOpen);
     }
 
+    if (!serverErrorMessage.empty()) {
+        ImGui::SetNextWindowPos(ImVec2(16.0f, 16.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.92f);
+        if (ImGui::Begin("Server Message", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::TextWrapped("%s", serverErrorMessage.c_str());
+            if (ImGui::Button("Dismiss")) serverErrorMessage.clear();
+        }
+        ImGui::End();
+    }
+
     // Render to screen
     ImGui::Render();
     int display_w, display_h;
@@ -254,6 +266,26 @@ void ClientRenderer::clearSelection() {
     droppedPaths.clear();
     pendingChangePreviews.clear();
     inspector.resetImageSourceEditor();
+}
+
+// Shows an error from the server in the client window
+void ClientRenderer::showServerError(const std::string& message, bool saveBoardAsError) {
+    if (saveBoardAsError) {
+        saveBoardNameError = true;
+        saveBoardNameErrorMessage = message;
+        saveBoardAsRequestPending = false;
+    } else {
+        serverErrorMessage = message;
+    }
+}
+
+// Updates the board name after a successful save response
+void ClientRenderer::confirmBoardSave(const std::string& boardName) {
+    const bool wasSaveAsRequest = saveBoardAsRequestPending;
+    saveBoardAsRequestPending = false;
+    if (wasSaveAsRequest && !boardName.empty()) closeSaveBoardAsPopup = true;
+    saveBoardNameError = false;
+    saveBoardNameErrorMessage.clear();
 }
 
 // Adds a local preview for a supported board command
@@ -1280,6 +1312,9 @@ void ClientRenderer::handleContextMenu(const BoardState& board, BoardCommandHand
             if (ImGui::MenuItem("Save Board As...")) {
                 std::snprintf(saveBoardName, sizeof(saveBoardName), "%s", board.boardName.c_str());
                 saveBoardNameError = false;
+                saveBoardNameErrorMessage.clear();
+                saveBoardAsRequestPending = false;
+                closeSaveBoardAsPopup = false;
                 openSaveBoardAsPopup = true;
             }
         }
@@ -1328,25 +1363,43 @@ void ClientRenderer::handleContextMenu(const BoardState& board, BoardCommandHand
     }
 
     if (ImGui::BeginPopupModal("Save Board As", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (closeSaveBoardAsPopup) {
+            closeSaveBoardAsPopup = false;
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::Text("Enter a name for this board:");
         const bool enterPressed = ImGui::InputText("##BoardNameInput", saveBoardName, sizeof(saveBoardName), ImGuiInputTextFlags_EnterReturnsTrue);
-        if (saveBoardName[0] != '\0') {
+        if (ImGui::IsItemEdited()) {
             saveBoardNameError = false;
+            saveBoardNameErrorMessage.clear();
         }
         if (saveBoardNameError) {
-            ImGui::Text("Board name cannot be empty.");
+            ImGui::TextWrapped("%s", saveBoardNameErrorMessage.empty()
+                                   ? "Board name cannot be empty."
+                                   : saveBoardNameErrorMessage.c_str());
         }
 
-        if (ImGui::Button("Save") || enterPressed) {
-            if (saveBoardName[0] == '\0') {
+        if (saveBoardAsRequestPending) {
+            ImGui::TextUnformatted("Saving board...");
+        } else if (ImGui::Button("Save") || enterPressed) {
+            const std::string boardName = saveBoardName;
+            if (boardName.find_first_not_of(" \t\r\n") == std::string::npos) {
                 saveBoardNameError = true;
+                saveBoardNameErrorMessage = "Board name cannot be empty.";
             } else {
-                commandHandler.handle(SaveBoardCommand{saveBoardName});
-                ImGui::CloseCurrentPopup();
+                saveBoardNameError = false;
+                saveBoardNameErrorMessage.clear();
+                if (commandHandler.sendSaveBoardAs(boardName)) {
+                    saveBoardAsRequestPending = true;
+                } else {
+                    saveBoardNameError = true;
+                    saveBoardNameErrorMessage = "Could not send save request.";
+                }
             }
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
+            saveBoardAsRequestPending = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

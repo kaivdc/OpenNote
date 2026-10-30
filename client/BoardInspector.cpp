@@ -163,9 +163,11 @@ void BoardInspector::drawColorPicker(const BoardState& board, BoardCommandHandle
     }
 }
 
+// Clears the image source editor when its selected card changes
 void BoardInspector::resetImageSourceEditor() {
     imageUrlEditCardID = 0;
     std::memset(imageUrlEditBuffer, 0, sizeof(imageUrlEditBuffer));
+    imageSourceError.clear();
 }
 
 
@@ -245,9 +247,21 @@ void BoardInspector::drawCardOptions(const BoardState& board, const ClientImageC
         if (submitted || deactivatedAfterEdit) {
             const std::string newImageSource = trimWhitespace(imageUrlEditBuffer);
             if (newImageSource != card.mediaURL) {
-                commandHandler.handle(SetCardImageCommand{card.cardID, newImageSource});
+                std::string error;
+                const std::string sharedImageSource = newImageSource.empty()
+                    ? std::string{}
+                    : ClientImageCache::sourceFromDrop(newImageSource, error);
+                if (!error.empty()) {
+                    imageSourceError = error;
+                } else {
+                    imageSourceError.clear();
+                    commandHandler.handle(SetCardImageCommand{card.cardID, sharedImageSource});
+                }
             }
         }
+    }
+    if (!imageSourceError.empty()) {
+        ImGui::TextWrapped("%s", imageSourceError.c_str());
     }
 
     if (!card.mediaURL.empty() && ImGui::Button("Remove Image##cardImage")) {
@@ -266,7 +280,7 @@ void BoardInspector::drawCardOptions(const BoardState& board, const ClientImageC
 
     // Text content editor
     ImGui::TextUnformatted("Text:");
-    char textBuffer[4096];
+    char textBuffer[MAX_CARD_TEXT_BYTES + 1];
     snprintf(textBuffer, sizeof(textBuffer), "%s", card.text.c_str());
     ImVec2 textSize(ImGui::GetContentRegionAvail().x, 100.0f);
     if (ImGui::InputTextMultiline("##text", textBuffer, sizeof(textBuffer), textSize, ImGuiInputTextFlags_WordWrap)) {

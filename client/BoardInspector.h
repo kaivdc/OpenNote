@@ -5,6 +5,7 @@
 #include "BoardUIState.h"
 #include "ClientImageCache.h"
 #include "imgui.h"
+#include <string>
 
 class BoardInspector {
 public:
@@ -28,6 +29,7 @@ private:
     bool colorPopupWasOpen = false;
     uint32_t imageUrlEditCardID = 0;
     char imageUrlEditBuffer[2048] = {};
+    std::string imageSourceError;
 
     void openColorPicker(ThemeColor field, const Color& current);
     void openObjectColorPicker(ObjectColorType type, uint32_t objectID, const Color& current);

@@ -56,13 +56,17 @@ To build and start a local server and client together (easy test, connecting at 
 ## Run the client and server separately
 Start the server in one terminal with <port>:
 ```sh
-./OpenNoteServer <port>
+./OpenNoteServer <port> [listen_address]
 ```
 Start the client in another terminal, connecting to <ip> via <port>:
 ```sh
 ./OpenNoteClient <ip> <port>
 ```
-The server listens on all network interfaces (`0.0.0.0`). Clients on another computer must use the server computer's reachable address and the selected port. The network must allow connections to that port.
+The server listens only on the local computer (`127.0.0.1`) by default. To let other computers connect, provide a trusted network address, such as `0.0.0.0` to listen on every network interface:
+```sh
+./OpenNoteServer 5432 0.0.0.0
+```
+OpenNote does not use authentication or encrypted connections. Only expose the server to a network you trust. Clients on another computer must use the server computer's reachable address and the selected port.
 
 ## Using OpenNote
 1. Start the server and open one or more clients.
@@ -79,7 +83,9 @@ The client and server communicate over TCP. Each packet has a 5-byte header foll
 | Payload length | 4 bytes | Unsigned byte count in network byte order |
 | Payload | Variable | JSON text payload |
 
-The payload limit is 10 MiB. The receiver reads the header and payload fully, so one TCP read is not treated as one complete packet. Several packets may arrive in one stream.
+The payload limit is 10 MiB. Complete board snapshots must also fit within this limit. The server accepts up to 16 client connections at a time. It closes clients that leave a packet incomplete for 60 seconds, stay idle for 90 seconds, take over 10 seconds to receive a packet, or fill their 10 MiB outgoing queue. The client sends a heartbeat every 30 seconds to keep an idle session open. The receiver reads the header and payload fully, so one TCP read is not treated as one complete packet. Several packets may arrive in one stream.
+
+Every board snapshot includes a board ID and revision. Accepted board updates include the same values. Clients ignore updates for another board or an older revision. If a client detects a missing revision, it requests a fresh snapshot.
 
 | Opcode | Name | Purpose |
 | --- | --- | --- |
@@ -91,7 +97,7 @@ The payload limit is 10 MiB. The receiver reads the header and payload fully, so
 | `0x06` | `CREATE_CONNECTOR` | Connect two cards |
 | `0x07` | `EDIT_CONNECTOR` | Change connector appearance |
 | `0x08` | `DELETE_CONNECTOR` | Delete a connector |
-| `0x09` | `SYNC_BOARD` | Join a board and receive its current state |
+| `0x09` | `SYNC_BOARD` | Join a board and receive its current state and revision |
 | `0x0A` | `CLIENT_CONNECTED` | Notify board clients that a client joined |
 | `0x0B` | `CLIENT_DISCONNECTED` | Notify board clients that a client left |
 | `0x10` | `DISCONNECT` | End the client session |
@@ -157,7 +163,10 @@ Run the protocol test script after building with `python3 tests/protocol_runner.
 - Application does not function on windows.
 - Authentication packets were removed due to complexity/times sake for P2.
 - Image files and downloaded images are limited to 6 MiB and 64 × 1024 × 1024 pixels. HTTP and HTTPS image URL loading requires `curl` on each client machine that loads the image.
-- The packet payload limit is 10 MiB.
+- Each card supports up to 4096 bytes of text.
+- A complete board snapshot and each packet can be up to 10 MiB. A change that would make a board exceed the snapshot limit is rejected.
+- The server accepts up to 16 client connections at a time.
+- The server listens on `127.0.0.1` by default. External access requires an explicit listen address. Authentication and encrypted connections are not available, so use a trusted network.
 
 ## Third-party Dependencies
 

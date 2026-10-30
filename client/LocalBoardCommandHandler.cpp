@@ -14,6 +14,15 @@ bool sendBoardCommand(int socket, OpCode opcode, const json& payload) {
     return true;
 }
 
+// Sends a save request with an optional board name
+bool sendSaveBoardRequest(int socket, const string& boardName) {
+    json payload = json::object();
+    if (!boardName.empty()) {
+        payload["boardName"] = boardName;
+    }
+    return sendBoardCommand(socket, OpCode::SAVE_BOARD, payload);
+}
+
 }
 
 // Connects the handler to the server socket
@@ -31,6 +40,18 @@ void LocalBoardCommandHandler::handle(const BoardCommand& command) {
 // Enables board commands after the server snapshot is loaded
 void LocalBoardCommandHandler::setBoardReady(bool ready) {
     boardReady = ready;
+    if (ready) boardRequestPending = false;
+}
+
+// Clears a failed board request without enabling board commands
+void LocalBoardCommandHandler::clearPendingBoardRequest() {
+    boardRequestPending = false;
+}
+
+// Sends a save-as request when the active board is ready
+bool LocalBoardCommandHandler::sendSaveBoardAs(const string& boardName) {
+    if (!boardReady) return false;
+    return sendSaveBoardRequest(socket, boardName);
 }
 
 // Sends a card creation command so the server can assign its ID
@@ -153,19 +174,17 @@ void LocalBoardCommandHandler::apply(const BringCardToFrontCommand& command) {
 
 // Requests that the server save the active board
 void LocalBoardCommandHandler::apply(const SaveBoardCommand& command) {
-    json payload = json::object();
-    if (!command.boardName.empty()) {
-        payload["boardName"] = command.boardName;
-    }
-    sendBoardCommand(socket, OpCode::SAVE_BOARD, payload);
+    sendSaveBoardRequest(socket, command.boardName);
 }
 
 // Requests a board snapshot and waits for the server to load it
 void LocalBoardCommandHandler::apply(const JoinBoardCommand& command) {
+    if (boardRequestPending) return;
     json payload;
     payload["boardID"] = command.boardID;
     if (sendBoardCommand(socket, OpCode::SYNC_BOARD, payload)) {
         boardReady = false;
+        boardRequestPending = true;
     }
 }
 
@@ -176,8 +195,9 @@ void LocalBoardCommandHandler::apply(const RefreshBoardListCommand&) {
 
 // Requests a new board so the server can assign its ID
 void LocalBoardCommandHandler::apply(const CreateBoardCommand&) {
-    if (sendBoardCommand(socket, OpCode::CREATE_BOARD, json::object())) {
+    if (!boardRequestPending && sendBoardCommand(socket, OpCode::CREATE_BOARD, json::object())) {
         boardReady = false;
+        boardRequestPending = true;
     }
 }
 

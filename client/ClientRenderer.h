@@ -73,6 +73,10 @@ private:
     char saveBoardName[MAX_BOARD_NAME_LENGTH + 1] = {};
     bool openSaveBoardAsPopup = false;
     bool saveBoardNameError = false;
+    std::string saveBoardNameErrorMessage;
+    bool saveBoardAsRequestPending = false;
+    bool closeSaveBoardAsPopup = false;
+    std::string serverErrorMessage;
     uint32_t pendingDeleteBoardID = 0;
     std::string pendingDeleteBoardName;
     bool openDeleteBoardPopup = false;
@@ -86,6 +90,10 @@ public:
     void setBoardSelectionVisible(bool visible);
     // Clears selected objects and selection controls
     void clearSelection();
+    // Shows an error from the server in the client window
+    void showServerError(const std::string& message, bool saveBoardAsError = false);
+    // Updates the board name after a successful save response
+    void confirmBoardSave(const std::string& boardName);
     // Adds a local preview for a board command while the server processes it
     void previewChange(const BoardCommand& command);
     // Updates local previews after a server packet changes the board

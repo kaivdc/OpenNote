@@ -118,7 +118,7 @@ bool sendAll(int sock, const char* buffer, size_t bytesToSend) {
 
 // Sends one framed packet with its opcode and payload
 bool sendPacket(int sock, uint8_t msgType, const string& payloadStr) {
-    if (payloadStr.size() > 10 * 1024 * 1024) {
+    if (payloadStr.size() > MAX_PACKET_PAYLOAD_BYTES) {
         return false;
     }
     lock_guard<mutex> lock(packetWriteMutex);

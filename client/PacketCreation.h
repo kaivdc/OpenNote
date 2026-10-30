@@ -7,7 +7,7 @@ using namespace std;
 using json = nlohmann::json;
 
 constexpr size_t HEADER_SIZE = 5; // 5 byte header: 1-byte msgType, 4-byte payloadLength
-constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB max payload
+constexpr size_t MAX_PAYLOAD_SIZE = MAX_PACKET_PAYLOAD_BYTES; // 10 MiB max payload
 
 bool sendPacket(int sock, uint8_t msgType, const string& payloadStr);
 

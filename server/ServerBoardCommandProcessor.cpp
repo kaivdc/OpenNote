@@ -119,7 +119,7 @@ ServerBoardCommandResult createCard(BoardState& board, const json& jsonParsed) {
     }
 
     const string cardText = jsonParsed.value("text", string("New Card"));
-    if (cardText.size() > 4096) {
+    if (cardText.size() > MAX_CARD_TEXT_BYTES) {
         return commandError(400, "Card text exceeds 4096 bytes.");
     }
 
@@ -190,7 +190,7 @@ ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed) {
             return commandError(400, "Card text must be a string.");
         }
         updatedCard.text = jsonParsed["text"].get<string>();
-        if (updatedCard.text.size() > 4096) {
+        if (updatedCard.text.size() > MAX_CARD_TEXT_BYTES) {
             return commandError(400, "Card text exceeds 4096 bytes.");
         }
         cardChanged = true;
@@ -503,7 +503,8 @@ nlohmann::json ServerBoardCommandProcessor::boardSnapshotToJSON(const BoardState
         connectors.push_back(connectorToJSON(board.connectors.at(connectorID)));
     }
 
-    return {{"syncType", "snapshot"}, {"boardID", board.boardID}, {"boardName", board.boardName},
+    return {{"syncType", "snapshot"}, {"boardID", board.boardID}, {"revision", board.revision},
+            {"boardName", board.boardName},
             {"createdAt", board.createdAt}, {"lastEditedAt", board.lastEditedAt}, {"theme", board.theme},
             {"cards", cards}, {"connectors", connectors},
             {"nextCardID", board.nextCardID}, {"nextConnectorID", board.nextConnectorID}};

@@ -11,17 +11,20 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <poll.h>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#include <memory>
+#include <queue>
+#include <utility>
 #include <system_error>
 #include <cstring>
 #include <cstdlib>
 #include <vector>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <nlohmann/json.hpp>
 
 #include "BoardStructs.h"
@@ -34,21 +37,39 @@ using json = nlohmann::json;
 
 constexpr int DEFAULT_SERVER_PORT = 5432; // default port when no port is provided
 constexpr int AUTO_SAVE_INTERVAL_SECONDS = 30;
+constexpr size_t MAX_ACTIVE_CLIENTS = 16;
+constexpr size_t MAX_OUTBOUND_QUEUE_BYTES = MAX_PACKET_PAYLOAD_BYTES + 5;
+constexpr int CLIENT_IDLE_TIMEOUT_SECONDS = 90;
+constexpr int PACKET_READ_TIMEOUT_SECONDS = 60;
+constexpr int PACKET_WRITE_TIMEOUT_SECONDS = 10;
 #define MAX_LINE 256
 
-fd_set master; // master file descriptor list
 int listener = -1;  // listening socket descriptor
-int fdmax;
 volatile sig_atomic_t serverStopping = 0;
-mutex masterMutex; // guards master/fdmax across threads
 
 unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
 unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a active boardID
 BoardDatabase boardDatabase;
 mutex stateMutex;
-mutex packetWriteMutex;
+mutex eventDispatchMutex;
 mutex clientSocketsMutex;
-unordered_set<int> activeClientSockets;
+struct OutboundPacket {
+    uint8_t opcode;
+    string payload;
+    size_t byteCount;
+};
+
+struct ClientOutboundQueue {
+    mutex queueMutex;
+    condition_variable ready;
+    condition_variable empty;
+    queue<OutboundPacket> packets;
+    size_t queuedBytes = 0;
+    size_t packetsInFlight = 0;
+    bool stopping = false;
+};
+
+unordered_map<int, shared_ptr<ClientOutboundQueue>> activeClients;
 bool serverShuttingDown = false;
 mutex clientThreadsMutex;
 condition_variable clientThreadsFinished;
@@ -72,10 +93,14 @@ void finishClientThread();
 void saveActiveBoards(const string& saveReason);
 void autoSaveBoards();
 void stopAutoSave();
-bool readExact(int sock, char* buffer, size_t bytesToRead);
+bool readExact(int sock, char* buffer, size_t bytesToRead, int timeoutSeconds);
 bool sendPacket(int sock, uint8_t msgType, const std::string& payloadStr);
 void sendError(int sock, int errCode, const std::string& errorMsg, const string& requestType);
 BoardState* getBoardForSocketLocked(int clientSocket);
+void sendQueuedPackets(int clientSocket, const shared_ptr<ClientOutboundQueue>& outboundQueue);
+void stopOutboundQueue(int clientSocket);
+void closeClientSocket(int clientSocket);
+void waitForOutboundQueue(const shared_ptr<ClientOutboundQueue>& outboundQueue);
 
 // Returns the name of a packet opcode for server log messages
 string opcodeName(uint8_t msgType) {
@@ -118,13 +143,37 @@ void stopServer(int signalNumber) {
 // Reads packets from one client and dispatches each request
 void ChildThread(long childSocket)
 {
-    char headerBuf[5];
+    shared_ptr<ClientOutboundQueue> outboundQueue;
+    {
+        lock_guard<mutex> lock(clientSocketsMutex);
+        auto client = activeClients.find(childSocket);
+        if (client != activeClients.end()) outboundQueue = client->second;
+    }
+    if (!outboundQueue) {
+        close(childSocket);
+        finishClientThread();
+        return;
+    }
 
+    thread sendThread;
+    try {
+        sendThread = thread(sendQueuedPackets, childSocket, outboundQueue);
+    } catch (const system_error& error) {
+        logServerMessage("ERROR", string("Client send thread creation failed: ") + error.what());
+        cleanupClientSession(childSocket, "send_thread_creation_failed");
+        stopOutboundQueue(childSocket);
+        closeClientSocket(childSocket);
+        finishClientThread();
+        return;
+    }
+
+    string disconnectReason = "connection_closed";
+    char headerBuf[5];
     while (1)
     {
         // handle data from a client
-        if (!readExact(childSocket, headerBuf, 5)) {
-            logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " event=connection_ended reason=header_read_failed");
+        if (!readExact(childSocket, headerBuf, 5, CLIENT_IDLE_TIMEOUT_SECONDS)) {
+            logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " event=connection_ended reason=header_read_failed_or_idle_timeout");
             break;
         }
         else
@@ -136,22 +185,24 @@ void ChildThread(long childSocket)
             // network to host
             uint32_t payloadLen = ntohl(networkLen);
 
-            if(payloadLen > 10 * 1024 * 1024) // if > 10 MB
+            if(payloadLen > MAX_PACKET_PAYLOAD_BYTES)
             {
                 sendError(childSocket, 413, "Packet payload exceeds 10 MB.", opcodeName(msgType));
+                waitForOutboundQueue(outboundQueue);
                 break;
             }
             else
             {
                 vector<char> payloadBuf(payloadLen);
-                if(payloadLen > 0 && !readExact(childSocket, payloadBuf.data(), payloadLen)) {
-                    logServerMessage("WARN", "clientSocket=" + to_string(childSocket) + " request=" + opcodeName(msgType) + " outcome=rejected reason=payload_read_failed");
+                if(payloadLen > 0 && !readExact(childSocket, payloadBuf.data(), payloadLen, PACKET_READ_TIMEOUT_SECONDS)) {
+                    logServerMessage("WARN", "clientSocket=" + to_string(childSocket) + " request=" + opcodeName(msgType) + " outcome=rejected reason=payload_read_failed_or_timeout");
                     break;
                 }
                 else
                 {
                     string payloadStr(payloadBuf.begin(), payloadBuf.end());
 
+                    bool disconnectRequested = false;
                     switch (msgType) {
                         case static_cast<uint8_t>(OpCode::HEARTBEAT): // HEARTBEAT (ping/pong)
                         {
@@ -213,9 +264,9 @@ void ChildThread(long childSocket)
                         case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
                         {
                             logServerMessage("INFO", "clientSocket=" + to_string(childSocket) + " request=DISCONNECT outcome=received");
-                            cleanupClientSession(childSocket, "client_request");
-                            finishClientThread();
-                            return;
+                            disconnectReason = "client_request";
+                            disconnectRequested = true;
+                            break;
                         }
                         default:
                         {
@@ -223,65 +274,181 @@ void ChildThread(long childSocket)
                             break;
                         }
                     }
+                    if (disconnectRequested) break;
                 }
             }
         }
     }
-    cleanupClientSession(childSocket, "connection_closed");
+
+    cleanupClientSession(childSocket, disconnectReason);
+    stopOutboundQueue(childSocket);
+    if (sendThread.joinable()) sendThread.join();
+    closeClientSocket(childSocket);
     finishClientThread();
 }
 
-
-// Reads the requested number of bytes, handling partial TCP reads
-bool readExact(int sock, char* buffer, size_t bytesToRead) {
+// Reads the requested number of bytes before the time limit
+bool readExact(int sock, char* buffer, size_t bytesToRead, int timeoutSeconds) {
+    const auto deadline = chrono::steady_clock::now() + chrono::seconds(timeoutSeconds);
     size_t bytesRead = 0;
     while (bytesRead < bytesToRead) {
-        ssize_t result = recv(sock, buffer + bytesRead, bytesToRead - bytesRead, 0);
-        if (result < 0 && errno == EINTR) {
-            continue;
-        }
-        if(result <= 0) {
-            // socket connection closed or erroring
-            return false;
-        }
-        bytesRead += result;
+        const auto remaining = chrono::duration_cast<chrono::milliseconds>(deadline - chrono::steady_clock::now());
+        if (remaining.count() <= 0) return false;
+
+        pollfd socketState{};
+        socketState.fd = sock;
+        socketState.events = POLLIN;
+        const int pollResult = poll(&socketState, 1, static_cast<int>(remaining.count()));
+        if (pollResult < 0 && errno == EINTR) continue;
+        if (pollResult <= 0) return false;
+
+        const ssize_t result = recv(sock, buffer + bytesRead, bytesToRead - bytesRead, MSG_DONTWAIT);
+        if (result < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+        if (result <= 0) return false;
+        bytesRead += static_cast<size_t>(result);
     }
     return true;
 }
 
-// Sends every byte in a buffer before returning
-bool sendAll(int sock, const char* buffer, size_t bytesToSend) {
+// Sends every byte in a buffer before the time limit
+bool sendAll(int sock, const char* buffer, size_t bytesToSend,
+             const chrono::steady_clock::time_point& deadline) {
     size_t bytesSent = 0;
     while (bytesSent < bytesToSend) {
+        const auto remaining = chrono::duration_cast<chrono::milliseconds>(deadline - chrono::steady_clock::now());
+        if (remaining.count() <= 0) return false;
+
+        pollfd socketState{};
+        socketState.fd = sock;
+        socketState.events = POLLOUT;
+        const int pollResult = poll(&socketState, 1, static_cast<int>(remaining.count()));
+        if (pollResult < 0 && errno == EINTR) continue;
+        if (pollResult <= 0) return false;
+
 #ifdef MSG_NOSIGNAL
-        constexpr int flags = MSG_NOSIGNAL;
+        constexpr int sendFlags = MSG_NOSIGNAL | MSG_DONTWAIT;
 #else
-        constexpr int flags = 0;
+        constexpr int sendFlags = MSG_DONTWAIT;
 #endif
-        const ssize_t result = send(sock, buffer + bytesSent, bytesToSend - bytesSent, flags);
-        if (result < 0 && errno == EINTR) {
-            continue;
-        }
-        if (result <= 0) {
-            return false;
-        }
+        const ssize_t result = send(sock, buffer + bytesSent, bytesToSend - bytesSent, sendFlags);
+        if (result < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+        if (result <= 0) return false;
         bytesSent += static_cast<size_t>(result);
     }
     return true;
 }
 
-// Sends one framed packet with its opcode and payload
-bool sendPacket(int sock, uint8_t msgType, const string& payloadStr) {
-    if (payloadStr.size() > 10 * 1024 * 1024) {
-        return false;
-    }
-    lock_guard<mutex> lock(packetWriteMutex);
+// Writes one framed packet with a time limit
+bool writePacket(int sock, uint8_t opcode, const string& payload) {
     char header[5];
-    header[0] = static_cast<char>(msgType);
-    const uint32_t networkLen = htonl(static_cast<uint32_t>(payloadStr.size()));
-    memcpy(&header[1], &networkLen, sizeof(networkLen));
-    return sendAll(sock, header, sizeof(header)) &&
-           (payloadStr.empty() || sendAll(sock, payloadStr.data(), payloadStr.size()));
+    header[0] = static_cast<char>(opcode);
+    const uint32_t networkLength = htonl(static_cast<uint32_t>(payload.size()));
+    memcpy(&header[1], &networkLength, sizeof(networkLength));
+    const auto deadline = chrono::steady_clock::now() + chrono::seconds(PACKET_WRITE_TIMEOUT_SECONDS);
+    return sendAll(sock, header, sizeof(header), deadline) &&
+           (payload.empty() || sendAll(sock, payload.data(), payload.size(), deadline));
+}
+
+// Adds one packet to a client queue without waiting for the socket
+bool sendPacket(int sock, uint8_t opcode, const string& payloadStr) {
+    if (payloadStr.size() > MAX_PACKET_PAYLOAD_BYTES) return false;
+
+    shared_ptr<ClientOutboundQueue> outboundQueue;
+    {
+        lock_guard<mutex> lock(clientSocketsMutex);
+        auto client = activeClients.find(sock);
+        if (client == activeClients.end()) return false;
+        outboundQueue = client->second;
+    }
+
+    const size_t packetBytes = payloadStr.size() + 5;
+    {
+        lock_guard<mutex> lock(outboundQueue->queueMutex);
+        if (outboundQueue->stopping || outboundQueue->queuedBytes + packetBytes > MAX_OUTBOUND_QUEUE_BYTES) {
+            logServerMessage("WARN", "clientSocket=" + to_string(sock) + " event=outbound_queue_limit_reached");
+            shutdown(sock, SHUT_RDWR);
+            return false;
+        }
+        outboundQueue->packets.push({opcode, payloadStr, packetBytes});
+        outboundQueue->queuedBytes += packetBytes;
+    }
+    outboundQueue->ready.notify_one();
+    return true;
+}
+
+// Sends queued packets for one client in the order they were added
+void sendQueuedPackets(int clientSocket, const shared_ptr<ClientOutboundQueue>& outboundQueue) {
+    while (true) {
+        OutboundPacket packet{};
+        {
+            unique_lock<mutex> lock(outboundQueue->queueMutex);
+            outboundQueue->ready.wait(lock, [&] {
+                return outboundQueue->stopping || !outboundQueue->packets.empty();
+            });
+            if (outboundQueue->packets.empty() && outboundQueue->stopping) return;
+            packet = std::move(outboundQueue->packets.front());
+            outboundQueue->packets.pop();
+            outboundQueue->packetsInFlight++;
+        }
+
+        const bool sent = writePacket(clientSocket, packet.opcode, packet.payload);
+        {
+            lock_guard<mutex> lock(outboundQueue->queueMutex);
+            outboundQueue->packetsInFlight--;
+            outboundQueue->queuedBytes -= packet.byteCount;
+            if (!sent) {
+                outboundQueue->stopping = true;
+                while (!outboundQueue->packets.empty()) {
+                    outboundQueue->packets.pop();
+                }
+                outboundQueue->queuedBytes = 0;
+            }
+            outboundQueue->empty.notify_all();
+        }
+        if (!sent) {
+            logServerMessage("WARN", "clientSocket=" + to_string(clientSocket) + " event=send_failed_or_timed_out");
+            shutdown(clientSocket, SHUT_RDWR);
+            outboundQueue->ready.notify_all();
+            return;
+        }
+    }
+}
+
+// Stops sending to a client and wakes its writer
+void stopOutboundQueue(int clientSocket) {
+    shared_ptr<ClientOutboundQueue> outboundQueue;
+    {
+        lock_guard<mutex> lock(clientSocketsMutex);
+        auto client = activeClients.find(clientSocket);
+        if (client == activeClients.end()) return;
+        outboundQueue = client->second;
+    }
+    {
+        lock_guard<mutex> lock(outboundQueue->queueMutex);
+        outboundQueue->stopping = true;
+        while (!outboundQueue->packets.empty()) {
+            outboundQueue->queuedBytes -= outboundQueue->packets.front().byteCount;
+            outboundQueue->packets.pop();
+        }
+    }
+    outboundQueue->ready.notify_all();
+    outboundQueue->empty.notify_all();
+    shutdown(clientSocket, SHUT_RDWR);
+}
+
+// Waits briefly for an error reply to finish before closing a client
+void waitForOutboundQueue(const shared_ptr<ClientOutboundQueue>& outboundQueue) {
+    unique_lock<mutex> lock(outboundQueue->queueMutex);
+    outboundQueue->empty.wait_for(lock, chrono::seconds(PACKET_WRITE_TIMEOUT_SECONDS + 1), [&] {
+        return (outboundQueue->packets.empty() && outboundQueue->packetsInFlight == 0) || outboundQueue->stopping;
+    });
+}
+
+// Closes a client socket after its writer has stopped
+void closeClientSocket(int clientSocket) {
+    lock_guard<mutex> lock(clientSocketsMutex);
+    activeClients.erase(clientSocket);
+    close(clientSocket);
 }
 
 // Sends a JSON error response to one client
@@ -289,7 +456,8 @@ void sendError(int sock, int errCode, const string& errorMsg, const string& requ
     const string level = errCode >= 500 ? "ERROR" : "WARN";
     logServerMessage(level, "clientSocket=" + to_string(sock) + " request=" + requestType +
                      " outcome=rejected errorCode=" + to_string(errCode) + " message=" + errorMsg);
-    const string jsonPayload = json{{"errCode", errCode}, {"errorMsg", errorMsg}}.dump();
+    const string jsonPayload = json{{"errCode", errCode}, {"errorMsg", errorMsg},
+                                    {"requestType", requestType}}.dump();
     if (!sendPacket(sock, static_cast<uint8_t>(OpCode::ERROR), jsonPayload)) {
         logServerMessage("ERROR", "clientSocket=" + to_string(sock) + " request=" + requestType + " response=send_failed");
     }
@@ -309,11 +477,11 @@ int main(int argc, char* argv[])
     }
 
     int serverPort = DEFAULT_SERVER_PORT;
-    if (argc > 2) {
-        logServerMessage("ERROR", "Usage: OpenNoteServer [port]");
+    if (argc > 3) {
+        logServerMessage("ERROR", "Usage: OpenNoteServer [port] [listen_address]");
         return 1;
     }
-    if (argc == 2) {
+    if (argc >= 2) {
         char* portEnd = nullptr;
         errno = 0;
         const long parsedPort = strtol(argv[1], &portEnd, 10);
@@ -330,8 +498,6 @@ int main(int argc, char* argv[])
         return 1;
     }
     logServerMessage("INFO", "Board database ready");
-
-    FD_ZERO(&master); // clear the master and temp sets
 
     // get the listener
     if ((listener = socket(AF_INET, SOCK_STREAM, 0)) == -1)
@@ -351,7 +517,13 @@ int main(int argc, char* argv[])
 
     // bind
     myaddr.sin_family = AF_INET;
-    myaddr.sin_addr.s_addr = INADDR_ANY;
+    myaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (argc == 3 && inet_pton(AF_INET, argv[2], &myaddr.sin_addr) != 1) {
+        logServerMessage("ERROR", "Listen address must be a valid IPv4 address.");
+        close(listener);
+        listener = -1;
+        return 1;
+    }
     myaddr.sin_port = htons(serverPort);
     memset(&(myaddr.sin_zero), '\0', 8);
     if (::bind(listener, (struct sockaddr *)&myaddr, sizeof(myaddr)) == -1)
@@ -371,15 +543,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // add the listener to the master set
-    FD_SET(listener, &master);
-
-    // keep track of the biggest file descriptor
-    fdmax = listener; // so far, it's this one
-
     signal(SIGINT, stopServer);
     signal(SIGTERM, stopServer);
-    logServerMessage("INFO", "Server listening address=0.0.0.0 port=" + to_string(serverPort));
+    logServerMessage("INFO", "Server listening address=" + string(inet_ntoa(myaddr.sin_addr)) +
+                     " port=" + to_string(serverPort));
 
     thread autoSaveThread;
     try {
@@ -407,17 +574,18 @@ int main(int argc, char* argv[])
         }
         else
         {
-            {
-                lock_guard<mutex> lock(masterMutex);
-                FD_SET(newfd, &master); // add to master set
-                if (newfd > fdmax)
-                { // keep track of the maximum
-                    fdmax = newfd;
-                }
-            }
+            shared_ptr<ClientOutboundQueue> outboundQueue = make_shared<ClientOutboundQueue>();
+            bool clientLimitReached = false;
             {
                 lock_guard<mutex> lock(clientSocketsMutex);
-                activeClientSockets.insert(newfd);
+                clientLimitReached = activeClients.size() >= MAX_ACTIVE_CLIENTS;
+                if (!clientLimitReached) activeClients[newfd] = outboundQueue;
+            }
+            if (clientLimitReached) {
+                logServerMessage("WARN", "clientSocket=" + to_string(newfd) +
+                                 " event=connection_rejected reason=client_limit");
+                close(newfd);
+                continue;
             }
             logServerMessage("INFO", "clientSocket=" + to_string(newfd) + " event=connected address=" + inet_ntoa(remoteaddr.sin_addr));
 
@@ -434,6 +602,8 @@ int main(int argc, char* argv[])
             {
                 logServerMessage("ERROR", string("Client thread creation failed: ") + e.what());
                 cleanupClientSession(newfd, "thread_creation_failed");
+                stopOutboundQueue(newfd);
+                closeClientSocket(newfd);
                 finishClientThread();
             }
         }
@@ -488,20 +658,40 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
     uint32_t boardID = 0;
 
     {
-        lock_guard<mutex> lock(stateMutex);
-        BoardState* board = getBoardForSocketLocked(clientSocket);
-        if (board) {
-            boardID = board->boardID;
-            BoardState previousBoard = *board;
-            result = ServerBoardCommandProcessor::process(*board, opcode, payloadStr, clientSocket);
-            if (result.success) {
-                if (boardDatabase.saveBoard(*board)) {
-                    clients = board->connectedClients;
-                } else {
-                    *board = previousBoard;
-                    result = {false, 500, "Could not save board changes.", string{}};
+        lock_guard<mutex> eventLock(eventDispatchMutex);
+        {
+            lock_guard<mutex> lock(stateMutex);
+            BoardState* board = getBoardForSocketLocked(clientSocket);
+            if (board) {
+                boardID = board->boardID;
+                BoardState previousBoard = *board;
+                result = ServerBoardCommandProcessor::process(*board, opcode, payloadStr, clientSocket);
+                if (result.success) {
+                    board->revision++;
+                    json eventPayload = json::parse(result.updatePayload);
+                    eventPayload["boardID"] = board->boardID;
+                    eventPayload["revision"] = board->revision;
+                    result.updatePayload = eventPayload.dump();
+
+                    const string snapshot = ServerBoardCommandProcessor::boardSnapshotToJSON(*board).dump();
+                    if (snapshot.size() > MAX_PACKET_PAYLOAD_BYTES ||
+                        result.updatePayload.size() > MAX_PACKET_PAYLOAD_BYTES) {
+                        *board = std::move(previousBoard);
+                        result = {false, 413, "Board exceeds the 10 MiB snapshot limit.", string{}};
+                    } else if (boardDatabase.saveBoard(*board)) {
+                        clients = board->connectedClients;
+                    } else {
+                        *board = std::move(previousBoard);
+                        result = {false, 500, "Could not save board changes.", string{}};
+                    }
                 }
             }
+        }
+
+        if (result.success) {
+            logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" + to_string(boardID) +
+                             " request=" + opcodeName(static_cast<uint8_t>(opcode)) + " outcome=success");
+            broadcastToClients(clients, clientSocket, static_cast<uint8_t>(opcode), result.updatePayload, true);
         }
     }
 
@@ -509,14 +699,11 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
         sendError(clientSocket, result.errorCode, result.errorMessage, opcodeName(static_cast<uint8_t>(opcode)));
         return;
     }
-
-    logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" + to_string(boardID) +
-                     " request=" + opcodeName(static_cast<uint8_t>(opcode)) + " outcome=success");
-    broadcastToClients(clients, clientSocket, static_cast<uint8_t>(opcode), result.updatePayload, true);
 }
 
-// Removes a client from its board, notifies the other clients, and closes its socket
+// Removes a client from its board and notifies the other clients
 void cleanupClientSession(int clientSocket, const string& disconnectReason) {
+    lock_guard<mutex> eventLock(eventDispatchMutex);
     vector<int> clients;
     uint32_t boardID = 0;
     bool notifyOtherClients = true;
@@ -551,9 +738,7 @@ void cleanupClientSession(int clientSocket, const string& disconnectReason) {
 
     {
         lock_guard<mutex> lock(clientSocketsMutex);
-        activeClientSockets.erase(clientSocket);
         notifyOtherClients = !serverShuttingDown;
-        close(clientSocket);
     }
 
     logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " event=disconnected reason=" +
@@ -572,7 +757,8 @@ void cleanupClientSession(int clientSocket, const string& disconnectReason) {
 void stopClientConnections() {
     lock_guard<mutex> lock(clientSocketsMutex);
     serverShuttingDown = true;
-    for (int clientSocket : activeClientSockets) {
+    for (const auto& client : activeClients) {
+        const int clientSocket = client.first;
         if (shutdown(clientSocket, SHUT_RDWR) == -1 && errno != ENOTCONN) {
             logServerMessage("WARN", "clientSocket=" + to_string(clientSocket) +
                              " shutdown failed: " + strerror(errno));
@@ -645,6 +831,7 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
             return false;
         }
 
+        lock_guard<mutex> eventLock(eventDispatchMutex);
         vector<int> previousClients;
         vector<int> currentClients;
         uint32_t previousBoardID = 0;
@@ -665,10 +852,19 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
                     sendError(clientSocket, 404, "Board does not exist.", "SYNC_BOARD");
                     return false;
                 }
+                const string loadedSnapshot = ServerBoardCommandProcessor::boardSnapshotToJSON(loadedBoard).dump();
+                if (loadedSnapshot.size() > MAX_PACKET_PAYLOAD_BYTES) {
+                    sendError(clientSocket, 413, "Board exceeds the 10 MiB snapshot limit.", "SYNC_BOARD");
+                    return false;
+                }
                 activeBoard = activeBoards.emplace(boardID, loadedBoard).first;
             }
 
             const string snapshot = ServerBoardCommandProcessor::boardSnapshotToJSON(activeBoard->second).dump();
+            if (snapshot.size() > MAX_PACKET_PAYLOAD_BYTES) {
+                sendError(clientSocket, 413, "Board exceeds the 10 MiB snapshot limit.", "SYNC_BOARD");
+                return false;
+            }
             if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::SYNC_BOARD), snapshot)) {
                 sendError(clientSocket, 500, "Failed to send board snapshot.", "SYNC_BOARD");
                 return false;
@@ -735,16 +931,17 @@ bool handleSaveBoard(int clientSocket, const string& payloadStr) {
         }
 
         const bool isSaveAs = request.contains("boardName");
+        const string requestType = isSaveAs ? "SAVE_BOARD_AS" : "SAVE_BOARD";
         string requestedBoardName;
         if (isSaveAs) {
             if (!request["boardName"].is_string()) {
-                sendError(clientSocket, 400, "Board name must be text.", "SAVE_BOARD");
+                sendError(clientSocket, 400, "Board name must be text.", requestType);
                 return false;
             }
             requestedBoardName = request["boardName"].get<string>();
             if (requestedBoardName.size() > MAX_BOARD_NAME_LENGTH ||
                 requestedBoardName.find_first_not_of(" \t\r\n") == string::npos) {
-                sendError(clientSocket, 400, "Board name must contain between 1 and 64 characters.", "SAVE_BOARD");
+                sendError(clientSocket, 400, "Board name must contain between 1 and 64 characters.", requestType);
                 return false;
             }
         }
@@ -754,60 +951,94 @@ bool handleSaveBoard(int clientSocket, const string& payloadStr) {
         bool boardSaved = false;
         bool boardNameAlreadyExists = false;
         bool boardNameLookupFailed = false;
+        bool boardTooLarge = false;
+        vector<int> clients;
+        uint32_t boardID = 0;
         {
-            lock_guard<mutex> lock(stateMutex);
-            BoardState* board = getBoardForSocketLocked(clientSocket);
-            if (board != nullptr) {
-                clientHasBoard = true;
-                if (isSaveAs) {
-                    BoardList boardList;
-                    if (boardDatabase.listBoards(boardList)) {
-                        auto existingBoard = boardList.find(requestedBoardName);
-                        boardNameAlreadyExists = existingBoard != boardList.end() &&
-                                                 existingBoard->second.boardID != board->boardID;
-                    } else {
-                        boardNameLookupFailed = true;
-                    }
-                }
-
-                if (!boardNameAlreadyExists && !boardNameLookupFailed) {
-                    const string previousBoardName = board->boardName;
+            lock_guard<mutex> eventLock(eventDispatchMutex);
+            {
+                lock_guard<mutex> lock(stateMutex);
+                BoardState* board = getBoardForSocketLocked(clientSocket);
+                if (board != nullptr) {
+                    clientHasBoard = true;
+                    boardID = board->boardID;
                     if (isSaveAs) {
-                        board->boardName = requestedBoardName;
+                        BoardList boardList;
+                        if (boardDatabase.listBoards(boardList)) {
+                            auto existingBoard = boardList.find(requestedBoardName);
+                            boardNameAlreadyExists = existingBoard != boardList.end() &&
+                                                     existingBoard->second.boardID != boardID;
+                        } else {
+                            boardNameLookupFailed = true;
+                        }
                     }
-                    boardSaved = boardDatabase.saveBoard(*board, false);
-                    if (!boardSaved) {
-                        board->boardName = previousBoardName;
+
+                    if (!boardNameAlreadyExists && !boardNameLookupFailed) {
+                        const string previousBoardName = board->boardName;
+                        const uint64_t previousRevision = board->revision;
+                        if (isSaveAs) {
+                            board->boardName = requestedBoardName;
+                            board->revision++;
+                        }
+
+                        const string snapshot = ServerBoardCommandProcessor::boardSnapshotToJSON(*board).dump();
+                        if (snapshot.size() > MAX_PACKET_PAYLOAD_BYTES) {
+                            boardTooLarge = true;
+                        } else {
+                            boardSaved = boardDatabase.saveBoard(*board, false);
+                        }
+                        if (!boardSaved) {
+                            board->boardName = previousBoardName;
+                            board->revision = previousRevision;
+                        }
+                    }
+                    if (boardSaved) {
+                        response = {{"boardID", board->boardID}, {"boardName", board->boardName}};
+                        if (isSaveAs) {
+                            response["revision"] = board->revision;
+                            clients = board->connectedClients;
+                        }
                     }
                 }
-                if (boardSaved) {
-                    response = {{"boardID", board->boardID}, {"boardName", board->boardName}};
-                }
+            }
+
+            if (boardSaved && isSaveAs) {
+                json boardUpdate = response;
+                boardUpdate["notification"] = true;
+                broadcastToClients(clients, clientSocket, static_cast<uint8_t>(OpCode::BOARD_SAVED),
+                                   boardUpdate.dump(), false);
+            }
+            if (boardSaved && !sendPacket(clientSocket, static_cast<uint8_t>(OpCode::BOARD_SAVED), response.dump())) {
+                logServerMessage("ERROR", "clientSocket=" + to_string(clientSocket) +
+                                 " request=" + requestType + " outcome=confirmation_failed");
+                return false;
+            }
+            if (boardSaved) {
+                logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" +
+                                 to_string(boardID) + " request=" + requestType + " outcome=success");
             }
         }
 
         if (!clientHasBoard) {
-            sendError(clientSocket, 403, "Client is not synced to an active board.", "SAVE_BOARD");
+            sendError(clientSocket, 403, "Client is not synced to an active board.", requestType);
             return false;
         }
         if (boardNameAlreadyExists) {
-            sendError(clientSocket, 409, "A board with this name already exists.", "SAVE_BOARD");
+            sendError(clientSocket, 409, "A board with this name already exists.", requestType);
             return false;
         }
         if (boardNameLookupFailed) {
-            sendError(clientSocket, 500, "Could not check the board name.", "SAVE_BOARD");
+            sendError(clientSocket, 500, "Could not check the board name.", requestType);
+            return false;
+        }
+        if (boardTooLarge) {
+            sendError(clientSocket, 413, "Board exceeds the 10 MiB snapshot limit.", requestType);
             return false;
         }
         if (!boardSaved) {
-            sendError(clientSocket, 500, "Could not save board.", "SAVE_BOARD");
+            sendError(clientSocket, 500, "Could not save board.", requestType);
             return false;
         }
-        if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::BOARD_SAVED), response.dump())) {
-            logServerMessage("ERROR", "clientSocket=" + to_string(clientSocket) + " request=SAVE_BOARD outcome=confirmation_failed");
-            return false;
-        }
-        logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" +
-                         to_string(response.at("boardID").get<uint32_t>()) + " request=SAVE_BOARD outcome=success");
         return true;
     } catch (const exception&) {
         sendError(clientSocket, 400, "Malformed JSON in SAVE_BOARD.", "SAVE_BOARD");
@@ -856,7 +1087,6 @@ bool handleListBoards(int clientSocket, const string& payloadStr) {
             sendError(clientSocket, 500, "Could not list boards.", "LIST_BOARDS");
             return false;
         }
-
         json boardItems = json::array();
         for (const auto& entry : boardList) {
             boardItems.push_back({
@@ -868,6 +1098,10 @@ bool handleListBoards(int clientSocket, const string& payloadStr) {
             });
         }
         const string response = json{{"boards", boardItems}}.dump();
+        if (response.size() > MAX_PACKET_PAYLOAD_BYTES) {
+            sendError(clientSocket, 413, "Board list exceeds the 10 MiB packet limit.", "LIST_BOARDS");
+            return false;
+        }
         if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::BOARD_LIST), response)) {
             logServerMessage("ERROR", "clientSocket=" + to_string(clientSocket) + " request=LIST_BOARDS response=send_failed");
             return false;

@@ -8,10 +8,13 @@ public:
     explicit LocalBoardCommandHandler(int socket);
     void handle(const BoardCommand& command) override;
     void setBoardReady(bool ready);
+    void clearPendingBoardRequest();
+    bool sendSaveBoardAs(const std::string& boardName) override;
 
 private:
     int socket;
     bool boardReady = true;
+    bool boardRequestPending = false;
 
     void apply(const CreateCardCommand& command);
     void apply(const DeleteCardCommand& command);
