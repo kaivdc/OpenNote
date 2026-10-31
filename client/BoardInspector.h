@@ -12,6 +12,8 @@ public:
     void drawColorPicker(const BoardState& board, BoardCommandHandler& commandHandler);
     void drawSidebar(const BoardState& board, const ClientImageCache& imageCache, BoardCommandHandler& commandHandler,
                      const ContextMenuTarget& selection, bool& sidebarOpen);
+    // Sends a pending text edit before leaving the selected card
+    void flushPendingText(const BoardState& board, BoardCommandHandler& commandHandler);
     void applyTheme(const BoardTheme& theme);
     void resetImageSourceEditor();
 
@@ -30,6 +32,12 @@ private:
     uint32_t imageUrlEditCardID = 0;
     char imageUrlEditBuffer[2048] = {};
     std::string imageSourceError;
+    uint32_t textEditCardID = 0;
+    std::string textEditBuffer;
+    std::string lastBoardText;
+    double textEditChangedAt = 0.0;
+    bool textEditPending = false;
+    bool textEditAwaitingServerUpdate = false;
 
     void openColorPicker(ThemeColor field, const Color& current);
     void openObjectColorPicker(ObjectColorType type, uint32_t objectID, const Color& current);

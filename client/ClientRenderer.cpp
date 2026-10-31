@@ -20,6 +20,7 @@ static constexpr float kMaxCardSize = 1000.0f;
 static constexpr float kResizeHandleSize = 10.0f;
 static constexpr float kResizeSideHandleLength = kResizeHandleSize * 4.0f;
 static constexpr float kSelectionDragThreshold = 4.0f;
+static constexpr double kBoardListRefreshSeconds = 5.0;
 
 // Converts between the board's byte Color and ImGui's 0..1 float color
 static ImVec4 toImVec4(const Color& c) {
@@ -134,7 +135,8 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
         ImGui::SameLine();
 
         if (ImGui::Button("Select Board")) {
-            showingBoardSelection = true;
+            inspector.flushPendingText(board, commandHandler);
+            setBoardSelectionVisible(true);
             commandHandler.handle(RefreshBoardListCommand{});
         }
         ImGui::SameLine();
@@ -243,6 +245,9 @@ void ClientRenderer::setAvailableBoards(const BoardList& boardList) {
 
 // Shows or hides the board selection screen
 void ClientRenderer::setBoardSelectionVisible(bool visible) {
+    if (visible && !showingBoardSelection) {
+        nextBoardListRefreshTime = 0.0;
+    }
     showingBoardSelection = visible;
 }
 
@@ -378,6 +383,14 @@ void ClientRenderer::confirmChange(uint8_t opcode, const BoardState& board) {
 
 // Draws the server boards and lets the client request one
 void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandler) {
+    const double currentTime = ImGui::GetTime();
+    if (nextBoardListRefreshTime == 0.0) {
+        nextBoardListRefreshTime = currentTime + kBoardListRefreshSeconds;
+    } else if (currentTime >= nextBoardListRefreshTime) {
+        commandHandler.handle(RefreshBoardListCommand{});
+        nextBoardListRefreshTime = currentTime + kBoardListRefreshSeconds;
+    }
+
     auto makeBoardNameLabel = [](const std::string& boardName, float maxWidth) {
         const std::string prefix = "Board: ";
         const std::string ellipsis = "...";
@@ -405,6 +418,7 @@ void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandle
     ImGui::SameLine();
     if (ImGui::Button("Refresh Board List")) {
         commandHandler.handle(RefreshBoardListCommand{});
+        nextBoardListRefreshTime = ImGui::GetTime() + kBoardListRefreshSeconds;
     }
     ImGui::SameLine();
     if (ImGui::Button("Create Board")) {

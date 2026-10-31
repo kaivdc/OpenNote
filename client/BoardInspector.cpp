@@ -8,6 +8,7 @@
 namespace {
 constexpr float kMinCardSize = 20.0f;
 constexpr float kMaxCardSize = 1000.0f;
+constexpr double kTextEditDelaySeconds = 0.2;
 
 ImVec4 toImVec4(const Color& color) {
     return ImVec4(color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, color.a / 255.0f);
@@ -173,6 +174,11 @@ void BoardInspector::resetImageSourceEditor() {
 
 void BoardInspector::drawSidebar(const BoardState& board, const ClientImageCache& imageCache, BoardCommandHandler& commandHandler,
                                  const ContextMenuTarget& selection, bool& sidebarOpen) {
+    if (textEditPending && (!sidebarOpen || selection.type != MenuContextType::Card ||
+                            selection.targetID != textEditCardID)) {
+        flushPendingText(board, commandHandler);
+    }
+
     // Return if an object was not selected 
     if (!sidebarOpen || selection.type == MenuContextType::Background ||
         selection.type == MenuContextType::MultipleSelection) {
@@ -209,6 +215,20 @@ void BoardInspector::drawSidebar(const BoardState& board, const ClientImageCache
     ImGui::End();
 }
 
+// Sends a pending text edit before leaving the selected card
+void BoardInspector::flushPendingText(const BoardState& board, BoardCommandHandler& commandHandler) {
+    if (!textEditPending) {
+        return;
+    }
+
+    auto cardIt = board.cards.find(textEditCardID);
+    if (cardIt != board.cards.end() && cardIt->second.text != textEditBuffer) {
+        commandHandler.handle(SetCardTextCommand{textEditCardID, textEditBuffer});
+        textEditAwaitingServerUpdate = true;
+    }
+    textEditPending = false;
+}
+
 // Title shown on the sidebar window for a given object type.
 const char* BoardInspector::getSelectionTitle(MenuContextType type) const {
     switch (type) {
@@ -226,6 +246,25 @@ void BoardInspector::drawCardOptions(const BoardState& board, const ClientImageC
         return;
     }
     const Card& card = cardIt->second;
+
+    if (textEditCardID != card.cardID) {
+        textEditCardID = card.cardID;
+        textEditBuffer = card.text;
+        lastBoardText = card.text;
+        textEditPending = false;
+        textEditAwaitingServerUpdate = false;
+    } else {
+        if (textEditAwaitingServerUpdate && card.text != lastBoardText) {
+            textEditAwaitingServerUpdate = false;
+        }
+        if (textEditAwaitingServerUpdate && card.text == textEditBuffer) {
+            textEditAwaitingServerUpdate = false;
+        }
+        if (!textEditPending && !textEditAwaitingServerUpdate) {
+            textEditBuffer = card.text;
+        }
+        lastBoardText = card.text;
+    }
 
     const bool hasEmbeddedImage = startsWith(card.mediaURL, "data:image/");
     if (imageUrlEditCardID != card.cardID) {
@@ -280,11 +319,19 @@ void BoardInspector::drawCardOptions(const BoardState& board, const ClientImageC
 
     // Text content editor
     ImGui::TextUnformatted("Text:");
-    char textBuffer[MAX_CARD_TEXT_BYTES + 1];
-    snprintf(textBuffer, sizeof(textBuffer), "%s", card.text.c_str());
+    char textBuffer[MAX_CARD_TEXT_BYTES + 1] = {};
+    snprintf(textBuffer, sizeof(textBuffer), "%s", textEditBuffer.c_str());
     ImVec2 textSize(ImGui::GetContentRegionAvail().x, 100.0f);
-    if (ImGui::InputTextMultiline("##text", textBuffer, sizeof(textBuffer), textSize, ImGuiInputTextFlags_WordWrap)) {
-        commandHandler.handle(SetCardTextCommand{card.cardID, textBuffer});
+    bool textChanged = ImGui::InputTextMultiline("##text", textBuffer, sizeof(textBuffer), textSize, ImGuiInputTextFlags_WordWrap);
+    bool textInputDeactivatedAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
+    if (textChanged) {
+        textEditBuffer = textBuffer;
+        textEditPending = true;
+        textEditChangedAt = ImGui::GetTime();
+    }
+    if (textEditPending && (textInputDeactivatedAfterEdit ||
+                            ImGui::GetTime() - textEditChangedAt >= kTextEditDelaySeconds)) {
+        flushPendingText(board, commandHandler);
     }
 
     // Card size editors with reset-to-default buttons (width matches the connector input)

@@ -70,6 +70,7 @@ private:
     std::vector<std::string> droppedPaths;
     BoardList availableBoards;
     bool showingBoardSelection = true;
+    double nextBoardListRefreshTime = 0.0;
     char saveBoardName[MAX_BOARD_NAME_LENGTH + 1] = {};
     bool openSaveBoardAsPopup = false;
     bool saveBoardNameError = false;
