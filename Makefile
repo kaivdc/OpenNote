@@ -53,7 +53,7 @@ OpenNoteClient: $(CLIENT_OBJS) $(IMGUI_OBJS)
 	$(CXX) $(CXXFLAGS) -o OpenNoteClient $(CLIENT_OBJS) $(IMGUI_OBJS) $(CLIENT_LDFLAGS)
 
 $(CLIENT_OBJS): shared/BoardStructs.h shared/ClientSettings.h client/BoardCommands.h client/BoardUIState.h \
-                client/BoardInspector.h client/ClientImageCache.h client/ClientRenderer.h \
+                client/BoardInspector.h client/ClientImageCache.h client/ClientRenderer.h client/ColorPicker.h \
                 client/LocalBoardCommandHandler.h client/PacketCreation.h
 $(SERVER_OBJS): shared/BoardStructs.h shared/ClientSettings.h server/ServerBoardCommandProcessor.h \
                 server/BoardDatabase.h server/ServerLogging.h

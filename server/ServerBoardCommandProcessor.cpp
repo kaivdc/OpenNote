@@ -178,14 +178,17 @@ ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed) {
     }
 
     Card updatedCard = cardIt->second;
-    bool cardChanged = jsonParsed.contains("x") || jsonParsed.contains("y") ||
-                       jsonParsed.contains("width") || jsonParsed.contains("height");
+    const bool geometryChanged = jsonParsed.contains("x") || jsonParsed.contains("y") ||
+                                 jsonParsed.contains("width") || jsonParsed.contains("height");
+    bool cardChanged = geometryChanged;
     if (!applyFloatJSON(jsonParsed, "x", updatedCard.x, -10000000.0f, 10000000.0f) ||
         !applyFloatJSON(jsonParsed, "y", updatedCard.y, -10000000.0f, 10000000.0f) ||
         !applyFloatJSON(jsonParsed, "width", updatedCard.width, 20.0f, 1000.0f) ||
         !applyFloatJSON(jsonParsed, "height", updatedCard.height, 20.0f, 1000.0f)) {
         return commandError(400, "Card geometry is invalid.");
     }
+    const bool cardSizeChanged = updatedCard.width != cardIt->second.width ||
+                                 updatedCard.height != cardIt->second.height;
     if (jsonParsed.contains("text")) {
         if (!jsonParsed["text"].is_string()) {
             return commandError(400, "Card text must be a string.");
@@ -241,10 +244,31 @@ ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed) {
     cardIt->second = updatedCard;
     board.bringCardToFront(cardID);
 
+    json connectorUpdates = json::array();
+    if (cardSizeChanged) {
+        for (auto& [connectorID, connector] : board.connectors) {
+            if (connector.sourceCardID != cardID && connector.targetCardID != cardID) {
+                continue;
+            }
+
+            const float maxThickness = board.getMaxConnectorThickness(connector);
+            if (maxThickness > 0.0f && connector.thickness > maxThickness) {
+                connector.thickness = maxThickness;
+                connectorUpdates.push_back({
+                    {"connectorID", connectorID},
+                    {"thickness", connector.thickness}
+                });
+            }
+        }
+    }
+
     json updatedPayload = jsonParsed;
     updatedPayload["cardID"] = cardID;
     updatedPayload["zIndex"] = board.cards.at(cardID).zIndex;
     updatedPayload["textRevision"] = board.cards.at(cardID).textRevision;
+    if (!connectorUpdates.empty()) {
+        updatedPayload["connectors"] = connectorUpdates;
+    }
     if (mediaURLField) {
         updatedPayload["mediaURL"] = board.cards.at(cardID).mediaURL;
     }
@@ -317,7 +341,11 @@ ServerBoardCommandResult editConnector(BoardState& board, const json& jsonParsed
         if (!std::isfinite(connectorThickness) || connectorThickness < 0.1f || connectorThickness > 1000.0f) {
             return commandError(400, "Connector thickness must be between 0.1 and 1000.");
         }
-        updatedConnector.thickness = connectorThickness;
+        const float maxThickness = board.getMaxConnectorThickness(updatedConnector);
+        if (maxThickness < 0.1f) {
+            return commandError(400, "Connector endpoints must exist.");
+        }
+        updatedConnector.thickness = std::min(connectorThickness, maxThickness);
         connectorChanged = true;
     }
     if (jsonParsed.contains("color")) {
@@ -331,7 +359,11 @@ ServerBoardCommandResult editConnector(BoardState& board, const json& jsonParsed
     }
 
     connectorIt->second = updatedConnector;
-    return commandSuccess(string{});
+    json updatedPayload = jsonParsed;
+    if (jsonParsed.contains("thickness")) {
+        updatedPayload["thickness"] = updatedConnector.thickness;
+    }
+    return commandSuccess(updatedPayload.dump());
 }
 
 // Validates and deletes a selection of cards and connectors

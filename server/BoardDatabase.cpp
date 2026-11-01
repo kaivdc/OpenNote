@@ -581,6 +581,10 @@ bool BoardDatabase::loadBoard(uint32_t boardID, BoardState& board, bool& found) 
             sqlite3_finalize(statement);
             return false;
         }
+        const float maxThickness = board.getMaxConnectorThickness(connector);
+        if (maxThickness > 0.0f) {
+            connector.thickness = std::min(connector.thickness, maxThickness);
+        }
         connector.color = readColorValues(statement, 4);
         board.connectors[connector.connectorID] = connector;
     }

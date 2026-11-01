@@ -89,6 +89,7 @@ private:
     std::string pendingDeleteBoardName;
     bool openDeleteBoardPopup = false;
     bool settingsSidebarOpen = false;
+    ImVec4 pendingSelectionColor = ImVec4(1.0f, 0.5f, 0.25f, 1.0f);
     char clientNameInput[MAX_CLIENT_NAME_LENGTH + 1] = {};
     bool clientNameInputInitialized = false;
     std::vector<ContextMenuTarget> reportedSelection;

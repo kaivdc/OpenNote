@@ -263,6 +263,19 @@ struct BoardState {
         return sourceExists && targetExists;
     }
 
+    // Returns the smallest width or height of the cards connected by a connector
+    float getMaxConnectorThickness(const Connector& connector) const {
+        auto sourceIt = cards.find(connector.sourceCardID);
+        auto targetIt = cards.find(connector.targetCardID);
+        if (sourceIt == cards.end() || targetIt == cards.end()) {
+            return 0.0f;
+        }
+
+        const Card& source = sourceIt->second;
+        const Card& target = targetIt->second;
+        return min({source.width, source.height, target.width, target.height});
+    }
+
     // Helper method checking whether a connector already links the two given cards (in either direction).
     bool connectorExistsBetween(uint32_t sourceCardID, uint32_t targetCardID) const {
         for (const auto& [id, connector] : connectors) {
@@ -324,7 +337,8 @@ struct BoardState {
         connector.connectorID = assignedID;
         connector.sourceCardID = sourceCardID;
         connector.targetCardID = targetCardID;
-        connector.thickness = (thickness > 0.0f) ? thickness : user_settings.defaultConnectorThickness;
+        const float requestedThickness = (thickness > 0.0f) ? thickness : user_settings.defaultConnectorThickness;
+        connector.thickness = min(requestedThickness, getMaxConnectorThickness(connector));
 
         connector.color = color.value_or(theme.connectorColor);
 

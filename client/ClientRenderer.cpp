@@ -10,6 +10,7 @@
 #include <vector>
 #include "BoardCommands.h"
 #include "BoardInspector.h"
+#include "ColorPicker.h"
 #include "LocalBoardCommandHandler.h"
 
 using namespace std;
@@ -21,11 +22,6 @@ static constexpr float kResizeHandleSize = 10.0f;
 static constexpr float kResizeSideHandleLength = kResizeHandleSize * 4.0f;
 static constexpr float kSelectionDragThreshold = 4.0f;
 static constexpr double kBoardListRefreshSeconds = 5.0;
-
-// Converts between the board's byte Color and ImGui's 0..1 float color
-static ImVec4 toImVec4(const Color& c) {
-    return ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f);
-}
 
 // Reads the highlight color saved for the current client
 static Color getSelectionColor(const Settings& settings) {
@@ -217,7 +213,7 @@ void ClientRenderer::updateAndRender(BoardState& board, BoardCommandHandler& com
         const ImVec2 rectMax(
             (selectionStart.x > selectionEnd.x) ? selectionStart.x : selectionEnd.x,
             (selectionStart.y > selectionEnd.y) ? selectionStart.y : selectionEnd.y);
-        ImVec4 fillColor = toImVec4(inspector.displayTheme(board).accentColor);
+        ImVec4 fillColor = colorToImVec4(inspector.displayTheme(board).accentColor);
         fillColor.w = 0.16f;
         draw_list->AddRectFilled(rectMin, rectMax, ImGui::ColorConvertFloat4ToU32(fillColor));
         draw_list->AddRect(rectMin, rectMax, ThemeUtils::toImColor(inspector.displayTheme(board).accentColor), 0.0f, 0, 1.5f);
@@ -573,26 +569,26 @@ void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandle
                 ImGui::CalcTextSize(createdAtLabel.c_str(), nullptr, false, textWidth).y +
                 ImGui::GetFrameHeight() * 2.0f + style.ItemSpacing.y * 6.0f + 3.0f;
             ImGui::PushID(static_cast<int>(boardInfo.boardID));
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, toImVec4(boardInfo.theme.cardColor));
-            ImGui::PushStyleColor(ImGuiCol_Border, toImVec4(ThemeUtils::getCardBorder(boardInfo.theme.cardColor)));
-            ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(boardTextColor));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, colorToImVec4(boardInfo.theme.cardColor));
+            ImGui::PushStyleColor(ImGuiCol_Border, colorToImVec4(ThemeUtils::getCardBorder(boardInfo.theme.cardColor)));
+            ImGui::PushStyleColor(ImGuiCol_Text, colorToImVec4(boardTextColor));
             ImGui::BeginChild("BoardCard", ImVec2(0.0f, cardHeight), true);
             ImGui::TextUnformatted(boardNameLabel.c_str());
             ImGui::Text("Board ID: %u", boardInfo.boardID);
             ImGui::TextWrapped("%s", editedAtLabel.c_str());
             ImGui::TextWrapped("%s", createdAtLabel.c_str());
-            ImGui::PushStyleColor(ImGuiCol_Button, toImVec4(boardInfo.theme.accentColor));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, toImVec4(ThemeUtils::shift(boardInfo.theme.accentColor, 15, 15, 15)));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, toImVec4(ThemeUtils::shift(boardInfo.theme.accentColor, -15, -15, -15)));
-            ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(buttonTextColor));
+            ImGui::PushStyleColor(ImGuiCol_Button, colorToImVec4(boardInfo.theme.accentColor));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colorToImVec4(ThemeUtils::shift(boardInfo.theme.accentColor, 15, 15, 15)));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, colorToImVec4(ThemeUtils::shift(boardInfo.theme.accentColor, -15, -15, -15)));
+            ImGui::PushStyleColor(ImGuiCol_Text, colorToImVec4(buttonTextColor));
             if (ImGui::Button("Join Board", ImVec2(-1.0f, 0.0f))) {
                 commandHandler.handle(JoinBoardCommand{boardInfo.boardID});
             }
             ImGui::PopStyleColor(4);
-            ImGui::PushStyleColor(ImGuiCol_Button, toImVec4(boardInfo.theme.connectorColor));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, toImVec4(ThemeUtils::shift(boardInfo.theme.connectorColor, 15, 15, 15)));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, toImVec4(ThemeUtils::shift(boardInfo.theme.connectorColor, -15, -15, -15)));
-            ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(deleteButtonTextColor));
+            ImGui::PushStyleColor(ImGuiCol_Button, colorToImVec4(boardInfo.theme.connectorColor));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colorToImVec4(ThemeUtils::shift(boardInfo.theme.connectorColor, 15, 15, 15)));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, colorToImVec4(ThemeUtils::shift(boardInfo.theme.connectorColor, -15, -15, -15)));
+            ImGui::PushStyleColor(ImGuiCol_Text, colorToImVec4(deleteButtonTextColor));
             if (ImGui::Button("Delete Board", ImVec2(-1.0f, 0.0f))) {
                 pendingDeleteBoardID = boardInfo.boardID;
                 pendingDeleteBoardName = boardName;
@@ -639,22 +635,21 @@ void ClientRenderer::drawSettingsSidebar(Settings& settings) {
 
     if (ImGui::Begin("Settings", &settingsSidebarOpen,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
-        ImGui::TextUnformatted("Selection highlight color:");
-        float color[4] = {
-            settings.selectionColor[0] / 255.0f,
-            settings.selectionColor[1] / 255.0f,
-            settings.selectionColor[2] / 255.0f,
-            settings.selectionColor[3] / 255.0f
-        };
-        const bool colorChanged = ImGui::ColorEdit4("##SelectionColor", color);
-        const bool colorEditFinished = ImGui::IsItemDeactivatedAfterEdit();
-        if (colorChanged) {
-            for (size_t channelIndex = 0; channelIndex < settings.selectionColor.size(); ++channelIndex) {
-                const float channelValue = std::clamp(color[channelIndex] * 255.0f, 0.0f, 255.0f);
-                settings.selectionColor[channelIndex] = static_cast<uint8_t>(channelValue + 0.5f);
-            }
+        const Color currentSelectionColor = getSelectionColor(settings);
+        if (drawColorSwatchRow("Selection highlight color:", "##SelectionColor", currentSelectionColor)) {
+            pendingSelectionColor = colorToImVec4(currentSelectionColor);
+            ImGui::OpenPopup("SelectionColorPicker");
         }
-        if (colorEditFinished) settings.saveToFile();
+        Settings defaultSettings;
+        const ColorPickerResult pickerResult = drawColorPickerPopup(
+            "SelectionColorPicker", pendingSelectionColor, getSelectionColor(defaultSettings));
+        if (pickerResult.confirmed) {
+            const Color confirmedColor = colorFromImVec4(pendingSelectionColor);
+            settings.selectionColor = {
+                confirmedColor.r, confirmedColor.g, confirmedColor.b, confirmedColor.a
+            };
+            settings.saveToFile();
+        }
 
         ImGui::Separator();
         ImGui::TextUnformatted("Default card width:");
@@ -1683,9 +1678,6 @@ void ClientRenderer::drawConnectors(ImDrawList* draw_list, const BoardState& boa
             draw_list->AddLine(srcCenter, tgtCenter, accentColorIm, (conn.thickness + 4.0f) * camera.zoom);
         }
 
-        uint32_t connColorIm = ThemeUtils::toImColor(inspector.displayConnectorColor(conn));
-        draw_list->AddLine(srcCenter, tgtCenter, connColorIm, conn.thickness * camera.zoom);
-
         const float deltaX = tgtCenter.x - srcCenter.x;
         const float deltaY = tgtCenter.y - srcCenter.y;
         const float lineLength = std::sqrt(deltaX * deltaX + deltaY * deltaY);
@@ -1698,20 +1690,39 @@ void ClientRenderer::drawConnectors(ImDrawList* draw_list, const BoardState& boa
                     continue;
                 }
                 ++remoteIndex;
-                const float offset = 4.0f * remoteIndex;
-                const ImVec2 remoteSource(srcCenter.x + offsetDirection.x * offset,
-                                          srcCenter.y + offsetDirection.y * offset);
-                const ImVec2 remoteTarget(tgtCenter.x + offsetDirection.x * offset,
-                                          tgtCenter.y + offsetDirection.y * offset);
+                const float outlineThickness = 2.0f;
+                const float connectorThickness = conn.thickness * camera.zoom;
+                const float outlineOffset = connectorThickness * 0.5f + 5.0f +
+                                            outlineThickness * 0.5f + 3.0f * (remoteIndex - 1);
+                const ImVec2 remoteSource(srcCenter.x + offsetDirection.x * outlineOffset,
+                                          srcCenter.y + offsetDirection.y * outlineOffset);
+                const ImVec2 remoteTarget(tgtCenter.x + offsetDirection.x * outlineOffset,
+                                          tgtCenter.y + offsetDirection.y * outlineOffset);
                 draw_list->AddLine(remoteSource, remoteTarget,
-                                   ThemeUtils::toImColor(remote.color),
-                                   std::max(3.0f, conn.thickness * camera.zoom + 2.0f));
-                const ImVec2 labelPosition((remoteSource.x + remoteTarget.x) * 0.5f,
-                                           (remoteSource.y + remoteTarget.y) * 0.5f);
+                                   ThemeUtils::toImColor(remote.color), outlineThickness);
+                const ImVec2 otherRemoteSource(srcCenter.x - offsetDirection.x * outlineOffset,
+                                               srcCenter.y - offsetDirection.y * outlineOffset);
+                const ImVec2 otherRemoteTarget(tgtCenter.x - offsetDirection.x * outlineOffset,
+                                               tgtCenter.y - offsetDirection.y * outlineOffset);
+                draw_list->AddLine(otherRemoteSource, otherRemoteTarget,
+                                   ThemeUtils::toImColor(remote.color), outlineThickness);
+                const ImVec2 textSize = ImGui::CalcTextSize(remote.clientName.c_str());
+                const float textProjection = std::abs(offsetDirection.x) * textSize.x * 0.5f +
+                                             std::abs(offsetDirection.y) * textSize.y * 0.5f;
+                const float labelOffset = outlineOffset + outlineThickness * 0.5f +
+                                          textProjection + 4.0f +
+                                          (remoteIndex - 1) * (textSize.y + 4.0f);
+                const ImVec2 labelCenter((srcCenter.x + tgtCenter.x) * 0.5f + offsetDirection.x * labelOffset,
+                                         (srcCenter.y + tgtCenter.y) * 0.5f + offsetDirection.y * labelOffset);
+                const ImVec2 labelPosition(labelCenter.x - textSize.x * 0.5f,
+                                           labelCenter.y - textSize.y * 0.5f);
                 draw_list->AddText(labelPosition, ThemeUtils::toImColor(remote.color),
                                    remote.clientName.c_str());
             }
         }
+
+        const uint32_t connColorIm = ThemeUtils::toImColor(inspector.displayConnectorColor(conn));
+        draw_list->AddLine(srcCenter, tgtCenter, connColorIm, conn.thickness * camera.zoom);
     }
 }
 

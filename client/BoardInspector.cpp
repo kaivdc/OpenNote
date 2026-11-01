@@ -1,4 +1,5 @@
 #include "BoardInspector.h"
+#include "ColorPicker.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -9,20 +10,6 @@ namespace {
 constexpr float kMinCardSize = 20.0f;
 constexpr float kMaxCardSize = 1000.0f;
 constexpr double kTextEditDelaySeconds = 0.2;
-
-ImVec4 toImVec4(const Color& color) {
-    return ImVec4(color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, color.a / 255.0f);
-}
-
-Color fromImVec4(const ImVec4& value) {
-    auto toByte = [](float channel) -> uint8_t {
-        float scaled = channel * 255.0f;
-        if (scaled < 0.0f) scaled = 0.0f;
-        if (scaled > 255.0f) scaled = 255.0f;
-        return static_cast<uint8_t>(scaled + 0.5f);
-    };
-    return {toByte(value.x), toByte(value.y), toByte(value.z), toByte(value.w)};
-}
 
 bool startsWith(const std::string& value, const char* prefix) {
     return value.rfind(prefix, 0) == 0;
@@ -64,7 +51,7 @@ void BoardInspector::openColorPicker(ThemeColor field, const Color& current) {
     editingThemeColor = field;
     editingObjectColorType = ObjectColorType::None;
     editingObjectID = 0;
-    pendingColor = toImVec4(current);
+    pendingColor = colorToImVec4(current);
     colorPickerRequested = true;
 }
 
@@ -72,7 +59,7 @@ void BoardInspector::openObjectColorPicker(ObjectColorType type, uint32_t object
     editingThemeColor = ThemeColor::CardColor;
     editingObjectColorType = type;
     editingObjectID = objectID;
-    pendingColor = toImVec4(current);
+    pendingColor = colorToImVec4(current);
     colorPickerRequested = true;
 }
 
@@ -108,59 +95,33 @@ void BoardInspector::drawColorPicker(const BoardState& board, BoardCommandHandle
         }
     }
 
-    if (ImGui::BeginPopup("ThemeColorPicker")) {
-        ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_PickerHueBar |
-                                    ImGuiColorEditFlags_NoSidePreview;
-        ImGui::ColorPicker4("##themeColor", (float*)&pendingColor, flags);
+    Color resetColor = themeColorDefault(editingThemeColor);
+    if (editingObjectColorType == ObjectColorType::Card) {
+        resetColor = board.theme.cardColor;
+    } else if (editingObjectColorType == ObjectColorType::Connector) {
+        resetColor = board.theme.connectorColor;
+    }
 
-        // Enter confirms, unless a color text field is being edited
-        bool enterPressed = !ImGui::GetIO().WantTextInput &&
-            (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
-
-        if (ImGui::Button("Confirm") || enterPressed) {
-            if (target) {
-                const Color committedColor = fromImVec4(pendingColor);
-                if (editingObjectColorType == ObjectColorType::None) {
-                    BoardThemeField field = BoardThemeField::BoardBackground;
-                    switch (editingThemeColor) {
-                        case ThemeColor::BoardBackground:   field = BoardThemeField::BoardBackground; break;
-                        case ThemeColor::CardColor:         field = BoardThemeField::CardColor; break;
-                        case ThemeColor::ConnectorColor:    field = BoardThemeField::ConnectorColor; break;
-                        case ThemeColor::AccentColor:       field = BoardThemeField::AccentColor; break;
-                        case ThemeColor::ImportantElements: field = BoardThemeField::ImportantElements; break;
-                    }
-                    commandHandler.handle(SetBoardThemeColorCommand{field, committedColor});
-                } else if (editingObjectColorType == ObjectColorType::Card) {
-                    commandHandler.handle(SetCardColorCommand{editingObjectID, committedColor});
-                } else if (editingObjectColorType == ObjectColorType::Connector) {
-                    commandHandler.handle(SetConnectorColorCommand{editingObjectID, committedColor});
-                }
+    const ColorPickerResult pickerResult =
+        drawColorPickerPopup("ThemeColorPicker", pendingColor, resetColor);
+    colorPopupWasOpen = pickerResult.isOpen;
+    if (pickerResult.confirmed && target) {
+        const Color committedColor = colorFromImVec4(pendingColor);
+        if (editingObjectColorType == ObjectColorType::None) {
+            BoardThemeField field = BoardThemeField::BoardBackground;
+            switch (editingThemeColor) {
+                case ThemeColor::BoardBackground:   field = BoardThemeField::BoardBackground; break;
+                case ThemeColor::CardColor:         field = BoardThemeField::CardColor; break;
+                case ThemeColor::ConnectorColor:    field = BoardThemeField::ConnectorColor; break;
+                case ThemeColor::AccentColor:       field = BoardThemeField::AccentColor; break;
+                case ThemeColor::ImportantElements: field = BoardThemeField::ImportantElements; break;
             }
-            ImGui::CloseCurrentPopup();
+            commandHandler.handle(SetBoardThemeColorCommand{field, committedColor});
+        } else if (editingObjectColorType == ObjectColorType::Card) {
+            commandHandler.handle(SetCardColorCommand{editingObjectID, committedColor});
+        } else if (editingObjectColorType == ObjectColorType::Connector) {
+            commandHandler.handle(SetConnectorColorCommand{editingObjectID, committedColor});
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset")) {
-            if (editingObjectColorType == ObjectColorType::None) {
-                pendingColor = toImVec4(themeColorDefault(editingThemeColor));
-            } else if (editingObjectColorType == ObjectColorType::Card) {
-                pendingColor = toImVec4(board.theme.cardColor);
-            } else if (editingObjectColorType == ObjectColorType::Connector) {
-                pendingColor = toImVec4(board.theme.connectorColor);
-            } else {
-                pendingColor = toImVec4(themeColorDefault(editingThemeColor));
-            }
-        }
-
-        ImGui::EndPopup();
-        colorPopupWasOpen = true;
-    } else {
-        // Preview colors live in renderer state, so closing without confirming
-        // simply discards the preview and leaves the board untouched.
-        colorPopupWasOpen = false;
     }
 }
 
@@ -438,19 +399,13 @@ void BoardInspector::drawCardOptions(const BoardState& board, const ClientImageC
     }
 
     // Card color editor with swatch opening the shared color picker
-    {
-        const float swatchWidth = 60.0f;
-        ImGui::TextUnformatted("Color:");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - swatchWidth);
-        const Color currentColor = displayCardColor(card);
-        if (ImGui::ColorButton("##cardColor", toImVec4(currentColor), ImGuiColorEditFlags_NoAlpha, ImVec2(swatchWidth, 0.0f))) {
-            openObjectColorPicker(ObjectColorType::Card, card.cardID, currentColor);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##cardColorReset")) {
-            commandHandler.handle(SetCardColorCommand{card.cardID, board.theme.cardColor});
-        }
+    const Color currentColor = displayCardColor(card);
+    if (drawColorSwatchRow("Color:", "##cardColor", currentColor)) {
+        openObjectColorPicker(ObjectColorType::Card, card.cardID, currentColor);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset##cardColorReset")) {
+        commandHandler.handle(SetCardColorCommand{card.cardID, board.theme.cardColor});
     }
 }
 
@@ -466,8 +421,10 @@ void BoardInspector::drawConnectorOptions(const BoardState& board, BoardCommandH
     ImGui::TextUnformatted("Thickness:");
     float resetButtonWidth = ImGui::CalcTextSize("Reset").x + ImGui::GetStyle().FramePadding.x * 2.0f;
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - resetButtonWidth - ImGui::GetStyle().ItemSpacing.x);
+    const float maxThickness = std::max(0.1f, board.getMaxConnectorThickness(connector));
     float thickness = connector.thickness;
     bool thicknessChanged = ImGui::InputFloat("##thickness", &thickness, 1.0f, 1.0f, "%.2f");
+    thickness = std::clamp(thickness, 0.1f, maxThickness);
 
     // Keep thickness positive once editing finishes so the connector stays valid
     if (!ImGui::IsItemActive() && thickness < 0.1f) {
@@ -480,23 +437,18 @@ void BoardInspector::drawConnectorOptions(const BoardState& board, BoardCommandH
     ImGui::SameLine();
     if (ImGui::Button("Reset")) {
         commandHandler.handle(SetConnectorThicknessCommand{
-            connector.connectorID, board.user_settings.defaultConnectorThickness});
+            connector.connectorID,
+            std::clamp(board.user_settings.defaultConnectorThickness, 0.1f, maxThickness)});
     }
 
     // Connector color editor with swatch opening the shared color picker
-    {
-        const float swatchWidth = 60.0f;
-        ImGui::TextUnformatted("Color:");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - swatchWidth);
-        const Color currentColor = displayConnectorColor(connector);
-        if (ImGui::ColorButton("##connectorColor", toImVec4(currentColor), ImGuiColorEditFlags_NoAlpha, ImVec2(swatchWidth, 0.0f))) {
-            openObjectColorPicker(ObjectColorType::Connector, connector.connectorID, currentColor);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##connColorReset")) {
-            commandHandler.handle(SetConnectorColorCommand{connector.connectorID, board.theme.connectorColor});
-        }
+    const Color currentColor = displayConnectorColor(connector);
+    if (drawColorSwatchRow("Color:", "##connectorColor", currentColor)) {
+        openObjectColorPicker(ObjectColorType::Connector, connector.connectorID, currentColor);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset##connColorReset")) {
+        commandHandler.handle(SetConnectorColorCommand{connector.connectorID, board.theme.connectorColor});
     }
 }
 
@@ -505,12 +457,7 @@ void BoardInspector::drawThemeOptions(const BoardState& board) {
     const BoardTheme theme = displayTheme(board);
 
     auto colorRow = [&](const char* label, const char* id, ThemeColor field, const Color& color) {
-        const float swatchWidth = 60.0f;
-        ImGui::TextUnformatted(label);
-        // Right-align the swatch within the content region
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - swatchWidth);
-        if (ImGui::ColorButton(id, toImVec4(color), ImGuiColorEditFlags_NoAlpha, ImVec2(swatchWidth, 0.0f))) {
+        if (drawColorSwatchRow(label, id, color)) {
             openColorPicker(field, color);
         }
     };
@@ -526,10 +473,10 @@ void BoardInspector::drawThemeOptions(const BoardState& board) {
 void BoardInspector::applyTheme(const BoardTheme& theme) {
     ImGuiStyle& style = ImGui::GetStyle();
 
-    const ImVec4 base = toImVec4(theme.cardColor);
-    const ImVec4 hovered = toImVec4(ThemeUtils::shift(theme.cardColor, 20, 20, 20));
-    const ImVec4 active = toImVec4(ThemeUtils::shift(theme.cardColor, -20, -20, -20));
-    const ImVec4 text = toImVec4(ThemeUtils::getTextColor(theme.cardColor));
+    const ImVec4 base = colorToImVec4(theme.cardColor);
+    const ImVec4 hovered = colorToImVec4(ThemeUtils::shift(theme.cardColor, 20, 20, 20));
+    const ImVec4 active = colorToImVec4(ThemeUtils::shift(theme.cardColor, -20, -20, -20));
+    const ImVec4 text = colorToImVec4(ThemeUtils::getTextColor(theme.cardColor));
 
     // Labels & text elements
     style.Colors[ImGuiCol_Text] = text;
@@ -557,7 +504,7 @@ BoardTheme BoardInspector::displayTheme(const BoardState& board) const {
         return theme;
     }
 
-    const Color preview = fromImVec4(pendingColor);
+    const Color preview = colorFromImVec4(pendingColor);
     switch (editingThemeColor) {
         case ThemeColor::BoardBackground:   theme.boardBackgroundColor = preview; break;
         case ThemeColor::CardColor:         theme.cardColor = preview; break;
@@ -571,7 +518,7 @@ BoardTheme BoardInspector::displayTheme(const BoardState& board) const {
 Color BoardInspector::displayCardColor(const Card& card) const {
     if (colorPopupWasOpen && editingObjectColorType == ObjectColorType::Card &&
         editingObjectID == card.cardID) {
-        return fromImVec4(pendingColor);
+        return colorFromImVec4(pendingColor);
     }
     return card.color;
 }
@@ -579,7 +526,7 @@ Color BoardInspector::displayCardColor(const Card& card) const {
 Color BoardInspector::displayConnectorColor(const Connector& connector) const {
     if (colorPopupWasOpen && editingObjectColorType == ObjectColorType::Connector &&
         editingObjectID == connector.connectorID) {
-        return fromImVec4(pendingColor);
+        return colorFromImVec4(pendingColor);
     }
     return connector.color;
 }

@@ -487,6 +487,15 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                     board.cards[cardID].height = newHeight;
                     board.cards[cardID].zIndex = newZ;
                 }
+                if (payload.contains("connectors") && payload["connectors"].is_array()) {
+                    for (const json& connectorUpdate : payload["connectors"]) {
+                        const uint32_t connectorID = connectorUpdate.at("connectorID").get<uint32_t>();
+                        auto connectorIt = board.connectors.find(connectorID);
+                        if (connectorIt != board.connectors.end()) {
+                            connectorIt->second.thickness = connectorUpdate.at("thickness").get<float>();
+                        }
+                    }
+                }
                 break;
             }
             case static_cast<uint8_t>(OpCode::EDIT_CARD_CONTENT):
