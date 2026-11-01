@@ -22,6 +22,7 @@
 #include <system_error>
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -49,6 +50,7 @@ volatile sig_atomic_t serverStopping = 0;
 
 unordered_map<uint32_t, BoardState> activeBoards; // Maps boardID to boardState in memory
 unordered_map<int, uint32_t> clientBoardMap; // Maps socket identifier to a active boardID
+unordered_map<int, vector<json>> activeSelections; // Maps each client to the objects they have selected
 BoardDatabase boardDatabase;
 mutex stateMutex;
 mutex eventDispatchMutex;
@@ -84,6 +86,7 @@ bool handleListBoards(int clientSocket, const std::string& payloadStr);
 bool handleCreateBoard(int clientSocket, const std::string& payloadStr);
 bool handleDeleteBoard(int clientSocket, const std::string& payloadStr);
 void handleBoardCommand(int clientSocket, OpCode opcode, const std::string& payloadStr);
+void handleObjectSelection(int clientSocket, const std::string& payloadStr);
 
 void broadcastToClients(const std::vector<int>& clients, int senderSocket, uint8_t msgType, const std::string& payloadStr, bool includeSender);
 void cleanupClientSession(int clientSocket, const string& disconnectReason);
@@ -95,7 +98,8 @@ void autoSaveBoards();
 void stopAutoSave();
 bool readExact(int sock, char* buffer, size_t bytesToRead, int timeoutSeconds);
 bool sendPacket(int sock, uint8_t msgType, const std::string& payloadStr);
-void sendError(int sock, int errCode, const std::string& errorMsg, const string& requestType);
+void sendError(int sock, int errCode, const std::string& errorMsg, const string& requestType,
+               const json& extraDetails = json::object());
 BoardState* getBoardForSocketLocked(int clientSocket);
 void sendQueuedPackets(int clientSocket, const shared_ptr<ClientOutboundQueue>& outboundQueue);
 void stopOutboundQueue(int clientSocket);
@@ -127,6 +131,7 @@ string opcodeName(uint8_t msgType) {
         case OpCode::BOARD_LIST: return "BOARD_LIST";
         case OpCode::CREATE_BOARD: return "CREATE_BOARD";
         case OpCode::DELETE_BOARD: return "DELETE_BOARD";
+        case OpCode::OBJECT_SELECTION: return "OBJECT_SELECTION";
     }
     return "UNKNOWN";
 }
@@ -234,6 +239,11 @@ void ChildThread(long childSocket)
                         case static_cast<uint8_t>(OpCode::BRING_CARD_TO_FRONT):
                         {
                             handleBoardCommand(childSocket, static_cast<OpCode>(msgType), payloadStr);
+                            break;
+                        }
+                        case static_cast<uint8_t>(OpCode::OBJECT_SELECTION):
+                        {
+                            handleObjectSelection(childSocket, payloadStr);
                             break;
                         }
                         case static_cast<uint8_t>(OpCode::SYNC_BOARD): // SYNC_BOARD
@@ -452,12 +462,18 @@ void closeClientSocket(int clientSocket) {
 }
 
 // Sends a JSON error response to one client
-void sendError(int sock, int errCode, const string& errorMsg, const string& requestType) {
+void sendError(int sock, int errCode, const string& errorMsg, const string& requestType,
+               const json& extraDetails) {
     const string level = errCode >= 500 ? "ERROR" : "WARN";
     logServerMessage(level, "clientSocket=" + to_string(sock) + " request=" + requestType +
                      " outcome=rejected errorCode=" + to_string(errCode) + " message=" + errorMsg);
-    const string jsonPayload = json{{"errCode", errCode}, {"errorMsg", errorMsg},
-                                    {"requestType", requestType}}.dump();
+    json errorPayload = {{"errCode", errCode}, {"errorMsg", errorMsg}, {"requestType", requestType}};
+    if (extraDetails.is_object()) {
+        for (auto it = extraDetails.begin(); it != extraDetails.end(); ++it) {
+            errorPayload[it.key()] = it.value();
+        }
+    }
+    const string jsonPayload = errorPayload.dump();
     if (!sendPacket(sock, static_cast<uint8_t>(OpCode::ERROR), jsonPayload)) {
         logServerMessage("ERROR", "clientSocket=" + to_string(sock) + " request=" + requestType + " response=send_failed");
     }
@@ -653,7 +669,7 @@ void broadcastToClients(const vector<int>& clients, int senderSocket, uint8_t ms
 
 // Applies one board command, returns errors to its sender, and broadcasts successful updates
 void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadStr) {
-    ServerBoardCommandResult result{false, 403, "Client is not synced to an active board.", string{}};
+    ServerBoardCommandResult result{false, 403, "Client is not synced to an active board.", string{}, string{}};
     vector<int> clients;
     uint32_t boardID = 0;
 
@@ -677,12 +693,12 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
                     if (snapshot.size() > MAX_PACKET_PAYLOAD_BYTES ||
                         result.updatePayload.size() > MAX_PACKET_PAYLOAD_BYTES) {
                         *board = std::move(previousBoard);
-                        result = {false, 413, "Board exceeds the 10 MiB snapshot limit.", string{}};
+                        result = {false, 413, "Board exceeds the 10 MiB snapshot limit.", string{}, string{}};
                     } else if (boardDatabase.saveBoard(*board)) {
                         clients = board->connectedClients;
                     } else {
                         *board = std::move(previousBoard);
-                        result = {false, 500, "Could not save board changes.", string{}};
+                        result = {false, 500, "Could not save board changes.", string{}, string{}};
                     }
                 }
             }
@@ -696,8 +712,152 @@ void handleBoardCommand(int clientSocket, OpCode opcode, const string& payloadSt
     }
 
     if (!result.success) {
-        sendError(clientSocket, result.errorCode, result.errorMessage, opcodeName(static_cast<uint8_t>(opcode)));
+        const json errorDetails = result.errorDetails.empty()
+            ? json::object()
+            : json::parse(result.errorDetails);
+        sendError(clientSocket, result.errorCode, result.errorMessage,
+                  opcodeName(static_cast<uint8_t>(opcode)), errorDetails);
         return;
+    }
+}
+
+// Stores a temporary object selection and shares it with the other board clients
+void handleObjectSelection(int clientSocket, const string& payloadStr) {
+    const json request = json::parse(payloadStr, nullptr, false);
+    if (request.is_discarded() || !request.is_object() ||
+        !request.contains("objectType") || !request["objectType"].is_string() ||
+        !request.contains("objectID") ||
+        (!request["objectID"].is_number_integer() && !request["objectID"].is_number_unsigned()) ||
+        !request.contains("selected") || !request["selected"].is_boolean() ||
+        !request.contains("clientName") || !request["clientName"].is_string() ||
+        !request.contains("selectionColor") || !request["selectionColor"].is_object()) {
+        sendError(clientSocket, 400, "Invalid OBJECT_SELECTION payload.", "OBJECT_SELECTION");
+        return;
+    }
+
+    const string objectType = request["objectType"].get<string>();
+    if (objectType != "card" && objectType != "connector") {
+        sendError(clientSocket, 400, "OBJECT_SELECTION objectType must be card or connector.", "OBJECT_SELECTION");
+        return;
+    }
+
+    uint64_t objectIDValue = 0;
+    try {
+        objectIDValue = request["objectID"].get<uint64_t>();
+    } catch (const exception&) {
+        sendError(clientSocket, 400, "OBJECT_SELECTION objectID is invalid.", "OBJECT_SELECTION");
+        return;
+    }
+    if (objectIDValue == 0 || objectIDValue > numeric_limits<uint32_t>::max()) {
+        sendError(clientSocket, 400, "OBJECT_SELECTION objectID must be positive.", "OBJECT_SELECTION");
+        return;
+    }
+    const uint32_t objectID = static_cast<uint32_t>(objectIDValue);
+    const bool selected = request["selected"].get<bool>();
+    const string clientName = request["clientName"].get<string>();
+    if (clientName.empty() || clientName.size() > MAX_CLIENT_NAME_LENGTH) {
+        sendError(clientSocket, 400, "Client name must contain between 1 and 32 bytes.", "OBJECT_SELECTION");
+        return;
+    }
+
+    const json& colorJSON = request["selectionColor"];
+    auto readColorChannel = [&](const char* field, uint8_t& channel) {
+        if (!colorJSON.contains(field)) return false;
+        if (colorJSON[field].is_number_unsigned()) {
+            const uint64_t channelValue = colorJSON[field].get<uint64_t>();
+            if (channelValue > 255) return false;
+            channel = static_cast<uint8_t>(channelValue);
+            return true;
+        }
+        if (!colorJSON[field].is_number_integer()) return false;
+        const int64_t channelValue = colorJSON[field].get<int64_t>();
+        if (channelValue < 0 || channelValue > 255) return false;
+        channel = static_cast<uint8_t>(channelValue);
+        return true;
+    };
+    Color selectionColor{};
+    if (!readColorChannel("r", selectionColor.r) ||
+        !readColorChannel("g", selectionColor.g) ||
+        !readColorChannel("b", selectionColor.b) ||
+        !readColorChannel("a", selectionColor.a)) {
+        sendError(clientSocket, 400, "OBJECT_SELECTION has an invalid highlight color.", "OBJECT_SELECTION");
+        return;
+    }
+
+    vector<int> clients;
+    json event;
+    uint32_t boardID = 0;
+    int errorCode = 403;
+    string errorMessage;
+    {
+        lock_guard<mutex> eventLock(eventDispatchMutex);
+        {
+            lock_guard<mutex> lock(stateMutex);
+            BoardState* board = getBoardForSocketLocked(clientSocket);
+            if (board == nullptr) {
+                errorMessage = "Client is not synced to an active board.";
+            } else {
+                boardID = board->boardID;
+                const bool objectExists = objectType == "card"
+                    ? board->cards.find(objectID) != board->cards.end()
+                    : board->connectors.find(objectID) != board->connectors.end();
+                if (selected && !objectExists) {
+                    errorCode = 404;
+                    errorMessage = "Selected object does not exist on this board.";
+                } else {
+                    event = {
+                        {"objectType", objectType},
+                        {"objectID", objectID},
+                        {"selected", selected},
+                        {"clientName", clientName},
+                        {"selectionColor", selectionColor},
+                        {"clientSocket", clientSocket},
+                        {"boardID", boardID}
+                    };
+
+                    if (selected) {
+                        vector<json>& clientSelections = activeSelections[clientSocket];
+                        auto existingSelection = find_if(clientSelections.begin(), clientSelections.end(),
+                            [&](const json& current) {
+                                return current.value("objectType", string{}) == objectType &&
+                                       current.value("objectID", 0u) == objectID;
+                            });
+                        if (existingSelection == clientSelections.end()) {
+                            clientSelections.push_back(event);
+                        } else {
+                            *existingSelection = event;
+                        }
+                    } else {
+                        auto clientSelectionIt = activeSelections.find(clientSocket);
+                        if (clientSelectionIt != activeSelections.end()) {
+                            vector<json>& clientSelections = clientSelectionIt->second;
+                            clientSelections.erase(
+                                remove_if(clientSelections.begin(), clientSelections.end(),
+                                    [&](const json& current) {
+                                        return current.value("objectType", string{}) == objectType &&
+                                               current.value("objectID", 0u) == objectID;
+                                    }),
+                                clientSelections.end());
+                            if (clientSelections.empty()) activeSelections.erase(clientSelectionIt);
+                        }
+                    }
+                    clients = board->connectedClients;
+                }
+            }
+        }
+
+        if (errorMessage.empty()) {
+            broadcastToClients(clients, clientSocket,
+                               static_cast<uint8_t>(OpCode::OBJECT_SELECTION), event.dump(), false);
+            logServerMessage("INFO", "clientSocket=" + to_string(clientSocket) + " boardID=" + to_string(boardID) +
+                             " request=OBJECT_SELECTION objectType=" + objectType +
+                             " objectID=" + to_string(objectID) +
+                             " selected=" + (selected ? "true" : "false"));
+        }
+    }
+
+    if (!errorMessage.empty()) {
+        sendError(clientSocket, errorCode, errorMessage, "OBJECT_SELECTION");
     }
 }
 
@@ -710,6 +870,8 @@ void cleanupClientSession(int clientSocket, const string& disconnectReason) {
 
     {
         lock_guard<mutex> lock(stateMutex);
+
+        activeSelections.erase(clientSocket);
 
         auto boardIt = clientBoardMap.find(clientSocket);
         if (boardIt != clientBoardMap.end()) {
@@ -834,6 +996,7 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
         lock_guard<mutex> eventLock(eventDispatchMutex);
         vector<int> previousClients;
         vector<int> currentClients;
+        vector<json> currentSelections;
         uint32_t previousBoardID = 0;
         bool switchedBoards = false;
 
@@ -879,6 +1042,7 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
                     connectedClients.erase(remove(connectedClients.begin(), connectedClients.end(), clientSocket), connectedClients.end());
                     previousClients = connectedClients;
                     switchedBoards = true;
+                    activeSelections.erase(clientSocket);
                     if (connectedClients.empty()) {
                         if (boardDatabase.saveBoard(previous->second, false)) {
                             logServerMessage("INFO", "boardID=" + to_string(previousBoardID) +
@@ -898,6 +1062,17 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
                 connectedClients.push_back(clientSocket);
             }
             currentClients = connectedClients;
+
+            for (int connectedClient : connectedClients) {
+                if (connectedClient == clientSocket) continue;
+                auto selectionIt = activeSelections.find(connectedClient);
+                if (selectionIt == activeSelections.end()) continue;
+                for (const json& selection : selectionIt->second) {
+                    if (selection.value("boardID", 0u) == boardID) {
+                        currentSelections.push_back(selection);
+                    }
+                }
+            }
         }
 
         if (switchedBoards) {
@@ -906,6 +1081,14 @@ bool handleSyncBoard(int clientSocket, const string& payloadStr) {
                 {"boardID", previousBoardID}
             };
             broadcastToClients(previousClients, -1, static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED), leavePayload.dump(), false);
+        }
+
+        for (const json& selection : currentSelections) {
+            if (!sendPacket(clientSocket, static_cast<uint8_t>(OpCode::OBJECT_SELECTION), selection.dump())) {
+                logServerMessage("ERROR", "clientSocket=" + to_string(clientSocket) +
+                                 " boardID=" + to_string(boardID) + " event=selection_sync_failed");
+                break;
+            }
         }
 
         nlohmann::json joinPayload = {{"childSocket", clientSocket}, {"boardID", boardID}};

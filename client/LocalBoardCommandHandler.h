@@ -19,6 +19,7 @@ private:
     void apply(const CreateCardCommand& command);
     void apply(const DeleteCardCommand& command);
     void apply(const CreateConnectorCommand& command);
+    void apply(const SetObjectSelectionCommand& command);
     void apply(const DeleteConnectorCommand& command);
     void apply(const DeleteObjectsCommand& command);
     void apply(const SetCardGeometryCommand& command);

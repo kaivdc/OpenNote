@@ -2,11 +2,16 @@
 #include <string>
 #include <fstream>
 #include <iostream>
+#include <array>
+#include <cstdint>
 #include "BoardStructs.h"
 
 using json = nlohmann::json;
 
 struct Settings {
+    std::string clientName = "User";
+    std::array<uint8_t, 4> selectionColor = {255, 128, 64, 255};
+
     // Default Card Dimensions
     float defaultCardWidth = 250.0f;
     float defaultCardHeight = 250.0f;
@@ -21,6 +26,8 @@ struct Settings {
             j["defaultCardWidth"] = defaultCardWidth;
             j["defaultCardHeight"] = defaultCardHeight;
             j["defaultConnectorThickness"] = defaultConnectorThickness;
+            j["clientName"] = clientName;
+            j["selectionColor"] = selectionColor;
 
             std::ofstream file(filepath);
             if (!file.is_open()) {
@@ -54,6 +61,13 @@ struct Settings {
             if (j.contains("defaultCardWidth")) j["defaultCardWidth"].get_to(defaultCardWidth);
             if (j.contains("defaultCardHeight")) j["defaultCardHeight"].get_to(defaultCardHeight);
             if (j.contains("defaultConnectorThickness")) j["defaultConnectorThickness"].get_to(defaultConnectorThickness);
+            if (j.contains("clientName") && j["clientName"].is_string()) {
+                clientName = j["clientName"].get<std::string>();
+            }
+            if (j.contains("selectionColor") && j["selectionColor"].is_array() &&
+                j["selectionColor"].size() == selectionColor.size()) {
+                selectionColor = j["selectionColor"].get<std::array<uint8_t, 4>>();
+            }
 
             return true;
         } catch (const std::exception& e) {

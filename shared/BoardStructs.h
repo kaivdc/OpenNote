@@ -16,6 +16,7 @@
 using namespace std;
 
 constexpr std::size_t MAX_BOARD_NAME_LENGTH = 64;
+constexpr std::size_t MAX_CLIENT_NAME_LENGTH = 32;
 constexpr std::size_t MAX_CARD_TEXT_BYTES = 4096;
 constexpr std::size_t MAX_PACKET_PAYLOAD_BYTES = 10 * 1024 * 1024;
 
@@ -42,7 +43,8 @@ BOARD_SAVED = 0x15,
 LIST_BOARDS = 0x16,
 BOARD_LIST = 0x17,
 CREATE_BOARD = 0x18,
-DELETE_BOARD = 0x19
+DELETE_BOARD = 0x19,
+OBJECT_SELECTION = 0x20
 };
 
 struct Color {
@@ -141,6 +143,7 @@ struct Card {
     float height; // > 0 but <= 1000
     uint32_t zIndex;
     string text; // < 4096
+    uint64_t textRevision = 0;
     string mediaURL;
     Color color;
 

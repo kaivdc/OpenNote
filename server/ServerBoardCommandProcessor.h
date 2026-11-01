@@ -11,6 +11,7 @@ struct ServerBoardCommandResult {
     int errorCode;
     std::string errorMessage;
     std::string updatePayload;
+    std::string errorDetails;
 };
 
 class ServerBoardCommandProcessor {

@@ -15,6 +15,8 @@ Derek Colie
 - Create and edit connectors between cards
 - Change the board theme and save a board with its current name or a new name
 - Select and delete multiple cards and connectors
+- Show other clients' selected objects with their chosen names and highlight colors
+- Change the client's display name and selection highlight color in board settings
 - Share board changes with clients connected to the same board (P3)
 - Save board data in a SQLite database
 
@@ -110,6 +112,7 @@ Every board snapshot includes a board ID and revision. Accepted board updates in
 | `0x17` | `BOARD_LIST` | Return board names, IDs, dates, and themes |
 | `0x18` | `CREATE_BOARD` | Create and join a board |
 | `0x19` | `DELETE_BOARD` | Delete a saved board with no connected clients |
+| `0x20` | `OBJECT_SELECTION` | Share a client's selected object and highlight color |
 | `0xFF` | `ERROR` | Return an error code and message |
 Examples of JSON payloads:
 ```json
@@ -120,6 +123,14 @@ This is a `CREATE_CARD` request. The server returns the created card with its as
 {"boardID":1}
 ```
 This is a `SYNC_BOARD` request. The server responds with a board snapshot containing the board name and dates, theme, cards, connectors, and next object IDs.
+```json
+{"cardID":3,"text":"Updated text","expectedTextRevision":4}
+```
+This is a card text update. The server accepts it only when `expectedTextRevision` matches the current card text version. If another client changed the text first, the server returns an `ERROR` with the latest text and revision so the client can keep the draft and ask the user how to continue.
+```json
+{"objectType":"card","objectID":3,"selected":true,"clientName":"Kairo","selectionColor":{"r":255,"g":128,"b":64,"a":255}}
+```
+This is an `OBJECT_SELECTION` request. Set `selected` to `false` when the client deselects the object. The server adds the client socket and board ID to the event it sends to the other clients on the board. Selection information is temporary and is not saved with the board.
 ```json
 {"errCode":404,"errorMsg":"Card ID not found on this board."}
 ```

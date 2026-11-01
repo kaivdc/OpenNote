@@ -174,8 +174,8 @@ void BoardInspector::resetImageSourceEditor() {
 
 void BoardInspector::drawSidebar(const BoardState& board, const ClientImageCache& imageCache, BoardCommandHandler& commandHandler,
                                  const ContextMenuTarget& selection, bool& sidebarOpen) {
-    if (textEditPending && (!sidebarOpen || selection.type != MenuContextType::Card ||
-                            selection.targetID != textEditCardID)) {
+    if (textEditCardID != 0 && (!sidebarOpen || selection.type != MenuContextType::Card ||
+                                selection.targetID != textEditCardID)) {
         flushPendingText(board, commandHandler);
     }
 
@@ -217,16 +217,47 @@ void BoardInspector::drawSidebar(const BoardState& board, const ClientImageCache
 
 // Sends a pending text edit before leaving the selected card
 void BoardInspector::flushPendingText(const BoardState& board, BoardCommandHandler& commandHandler) {
-    if (!textEditPending) {
+    auto editIt = textEdits.find(textEditCardID);
+    if (editIt == textEdits.end() || !editIt->second.pending || editIt->second.conflict ||
+        editIt->second.awaitingServerUpdate) {
         return;
     }
 
     auto cardIt = board.cards.find(textEditCardID);
-    if (cardIt != board.cards.end() && cardIt->second.text != textEditBuffer) {
-        commandHandler.handle(SetCardTextCommand{textEditCardID, textEditBuffer});
-        textEditAwaitingServerUpdate = true;
+    TextEditState& edit = editIt->second;
+    if (cardIt == board.cards.end()) {
+        edit.pending = false;
+        return;
     }
-    textEditPending = false;
+    if (cardIt->second.textRevision != edit.baseRevision) {
+        markTextConflict(textEditCardID, cardIt->second.text, cardIt->second.textRevision);
+        return;
+    }
+    if (cardIt->second.text == edit.text) {
+        edit.pending = false;
+        return;
+    }
+
+    commandHandler.handle(SetCardTextCommand{textEditCardID, edit.text, edit.baseRevision});
+    edit.sentText = edit.text;
+    edit.pending = false;
+    edit.awaitingServerUpdate = true;
+}
+
+// Keeps a rejected text draft and displays the latest server version
+void BoardInspector::markTextConflict(uint32_t cardID, const std::string& serverText, uint64_t textRevision) {
+    auto editIt = textEdits.find(cardID);
+    if (editIt == textEdits.end()) {
+        return;
+    }
+
+    TextEditState& edit = editIt->second;
+    edit.conflictText = serverText;
+    edit.conflictRevision = textRevision;
+    edit.pending = false;
+    edit.awaitingServerUpdate = false;
+    edit.conflict = true;
+    edit.widgetRevision++;
 }
 
 // Title shown on the sidebar window for a given object type.
@@ -247,23 +278,31 @@ void BoardInspector::drawCardOptions(const BoardState& board, const ClientImageC
     }
     const Card& card = cardIt->second;
 
-    if (textEditCardID != card.cardID) {
-        textEditCardID = card.cardID;
-        textEditBuffer = card.text;
-        lastBoardText = card.text;
-        textEditPending = false;
-        textEditAwaitingServerUpdate = false;
+    textEditCardID = card.cardID;
+    TextEditState& edit = textEdits[card.cardID];
+    if (!edit.initialized) {
+        edit.text = card.text;
+        edit.baseRevision = card.textRevision;
+        edit.initialized = true;
     } else {
-        if (textEditAwaitingServerUpdate && card.text != lastBoardText) {
-            textEditAwaitingServerUpdate = false;
+        if (card.textRevision != edit.baseRevision) {
+            if (edit.awaitingServerUpdate && card.text == edit.sentText) {
+                edit.awaitingServerUpdate = false;
+                edit.baseRevision = card.textRevision;
+                if (!edit.pending) {
+                    edit.text = card.text;
+                }
+            } else if (!edit.pending && !edit.awaitingServerUpdate && !edit.conflict) {
+                edit.text = card.text;
+                edit.baseRevision = card.textRevision;
+                edit.widgetRevision++;
+            } else if (!edit.conflict) {
+                markTextConflict(card.cardID, card.text, card.textRevision);
+            } else {
+                edit.conflictText = card.text;
+                edit.conflictRevision = card.textRevision;
+            }
         }
-        if (textEditAwaitingServerUpdate && card.text == textEditBuffer) {
-            textEditAwaitingServerUpdate = false;
-        }
-        if (!textEditPending && !textEditAwaitingServerUpdate) {
-            textEditBuffer = card.text;
-        }
-        lastBoardText = card.text;
     }
 
     const bool hasEmbeddedImage = startsWith(card.mediaURL, "data:image/");
@@ -320,17 +359,45 @@ void BoardInspector::drawCardOptions(const BoardState& board, const ClientImageC
     // Text content editor
     ImGui::TextUnformatted("Text:");
     char textBuffer[MAX_CARD_TEXT_BYTES + 1] = {};
-    snprintf(textBuffer, sizeof(textBuffer), "%s", textEditBuffer.c_str());
+    snprintf(textBuffer, sizeof(textBuffer), "%s", edit.text.c_str());
     ImVec2 textSize(ImGui::GetContentRegionAvail().x, 100.0f);
-    bool textChanged = ImGui::InputTextMultiline("##text", textBuffer, sizeof(textBuffer), textSize, ImGuiInputTextFlags_WordWrap);
-    bool textInputDeactivatedAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
-    if (textChanged) {
-        textEditBuffer = textBuffer;
-        textEditPending = true;
-        textEditChangedAt = ImGui::GetTime();
+    ImGui::PushID(edit.widgetRevision);
+    ImGuiInputTextFlags textFlags = ImGuiInputTextFlags_WordWrap;
+    if (edit.conflict) {
+        textFlags |= ImGuiInputTextFlags_ReadOnly;
     }
-    if (textEditPending && (textInputDeactivatedAfterEdit ||
-                            ImGui::GetTime() - textEditChangedAt >= kTextEditDelaySeconds)) {
+    bool textChanged = ImGui::InputTextMultiline("##text", textBuffer, sizeof(textBuffer), textSize, textFlags);
+    bool textInputDeactivatedAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::PopID();
+    if (textChanged) {
+        edit.text = textBuffer;
+        edit.pending = true;
+        edit.changedAt = ImGui::GetTime();
+    }
+    if (edit.conflict) {
+        ImGui::TextWrapped("This card changed while you were editing. Your draft is saved.");
+        ImGui::TextWrapped("Latest server text: %s", edit.conflictText.c_str());
+        if (ImGui::Button("Use latest text")) {
+            edit.text = edit.conflictText;
+            edit.baseRevision = edit.conflictRevision;
+            edit.pending = false;
+            edit.awaitingServerUpdate = false;
+            edit.conflict = false;
+            edit.widgetRevision++;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Replace with my draft")) {
+            edit.baseRevision = edit.conflictRevision;
+            edit.sentText = edit.text;
+            edit.pending = false;
+            edit.awaitingServerUpdate = true;
+            edit.conflict = false;
+            commandHandler.handle(SetCardTextCommand{card.cardID, edit.text, edit.conflictRevision});
+            edit.widgetRevision++;
+        }
+    }
+    if (edit.pending && !edit.conflict && !edit.awaitingServerUpdate &&
+        (textInputDeactivatedAfterEdit || ImGui::GetTime() - edit.changedAt >= kTextEditDelaySeconds)) {
         flushPendingText(board, commandHandler);
     }
 

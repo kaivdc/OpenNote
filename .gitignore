@@ -9,7 +9,7 @@ OpenNoteServer.o
 imgui/*.o
 imgui/backends/*.o
 
-settings.json
+/settings.json
 imgui.ini
 opennote.db
 opennote.db-journal

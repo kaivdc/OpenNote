@@ -27,6 +27,17 @@ static ImVec4 toImVec4(const Color& c) {
     return ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f);
 }
 
+// Reads the highlight color saved for the current client
+static Color getSelectionColor(const Settings& settings) {
+    return {settings.selectionColor[0], settings.selectionColor[1],
+            settings.selectionColor[2], settings.selectionColor[3]};
+}
+
+// Checks whether two selections refer to the same board object
+static bool sameSelection(const ContextMenuTarget& left, const ContextMenuTarget& right) {
+    return left.type == right.type && left.targetID == right.targetID;
+}
+
 static bool rectanglesOverlap(ImVec2 aMin, ImVec2 aMax, ImVec2 bMin, ImVec2 bMax) {
     return aMin.x <= bMax.x && aMax.x >= bMin.x &&
            aMin.y <= bMax.y && aMax.y >= bMin.y;
@@ -99,7 +110,7 @@ GLFWwindow* ClientRenderer::initialize(int width, int height, const char* title)
     return window;
 }
 
-void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandler& commandHandler) {
+void ClientRenderer::updateAndRender(BoardState& board, BoardCommandHandler& commandHandler) {
     glfwPollEvents();
 
     ImGui_ImplOpenGL3_NewFrame();
@@ -126,7 +137,7 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
     ImGui::Begin("board Root", nullptr, window_flags);
 
     if (showingBoardSelection || board.boardID == 0) {
-        drawBoardSelectionScreen(commandHandler);
+        drawBoardSelectionScreen(commandHandler, board.user_settings);
     } else {
     // Info bar
     if (ImGui::BeginChild("Toolbar", ImVec2(0, 45), true)) {
@@ -145,6 +156,14 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
             camera.x = 0.0f;
             camera.y = 0.0f;
             camera.zoom = 1.0f;
+        }
+        const float settingsButtonWidth = ImGui::CalcTextSize("Settings").x +
+            ImGui::GetStyle().FramePadding.x * 2.0f;
+        const float toolbarRightEdge = ImGui::GetWindowContentRegionMax().x;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), toolbarRightEdge - settingsButtonWidth));
+        if (ImGui::Button("Settings", ImVec2(settingsButtonWidth, 0.0f))) {
+            settingsSidebarOpen = !settingsSidebarOpen;
+            if (settingsSidebarOpen) selectionSidebarOpen = false;
         }
         ImGui::EndChild();
     }
@@ -207,7 +226,13 @@ void ClientRenderer::updateAndRender(const BoardState& board, BoardCommandHandle
     draw_list->PopClipRect();
     }
 
+    syncObjectSelection(board, commandHandler);
+
     ImGui::End();
+
+    if (settingsSidebarOpen) {
+        drawSettingsSidebar(board.user_settings);
+    }
 
     // Selection sidebar hook (per-object editing options)
     if (!showingBoardSelection && board.boardID != 0) {
@@ -282,6 +307,46 @@ void ClientRenderer::showServerError(const std::string& message, bool saveBoardA
     } else {
         serverErrorMessage = message;
     }
+}
+
+// Stores the latest server text and revision for an editor conflict
+void ClientRenderer::markTextConflict(uint32_t cardID, const std::string& serverText, uint64_t textRevision) {
+    inspector.markTextConflict(cardID, serverText, textRevision);
+}
+
+// Adds or updates an object selected by another client
+void ClientRenderer::updateRemoteSelection(int clientSocket, const ContextMenuTarget& target, bool selected,
+                                           const std::string& clientName, const Color& selectionColor) {
+    auto selectionIt = std::find_if(remoteSelections.begin(), remoteSelections.end(),
+        [&](const RemoteSelection& remote) {
+            return remote.clientSocket == clientSocket && sameSelection(remote.target, target);
+        });
+
+    if (!selected) {
+        if (selectionIt != remoteSelections.end()) remoteSelections.erase(selectionIt);
+        return;
+    }
+
+    if (selectionIt == remoteSelections.end()) {
+        remoteSelections.push_back({clientSocket, target, clientName, selectionColor});
+    } else {
+        selectionIt->clientName = clientName;
+        selectionIt->color = selectionColor;
+    }
+}
+
+// Removes the selections reported by a disconnected client
+void ClientRenderer::clearRemoteSelections(int clientSocket) {
+    remoteSelections.erase(
+        std::remove_if(remoteSelections.begin(), remoteSelections.end(), [clientSocket](const RemoteSelection& remote) {
+            return remote.clientSocket == clientSocket;
+        }),
+        remoteSelections.end());
+}
+
+// Removes every remote selection after a board snapshot is loaded
+void ClientRenderer::clearRemoteSelections() {
+    remoteSelections.clear();
 }
 
 // Updates the board name after a successful save response
@@ -382,7 +447,7 @@ void ClientRenderer::confirmChange(uint8_t opcode, const BoardState& board) {
 }
 
 // Draws the server boards and lets the client request one
-void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandler) {
+void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandler, Settings& settings) {
     const double currentTime = ImGui::GetTime();
     if (nextBoardListRefreshTime == 0.0) {
         nextBoardListRefreshTime = currentTime + kBoardListRefreshSeconds;
@@ -423,6 +488,35 @@ void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandle
     ImGui::SameLine();
     if (ImGui::Button("Create Board")) {
         commandHandler.handle(CreateBoardCommand{});
+    }
+
+    if (!clientNameInputInitialized) {
+        std::snprintf(clientNameInput, sizeof(clientNameInput), "%s", settings.clientName.c_str());
+        clientNameInputInitialized = true;
+    }
+    const float nameLabelWidth = ImGui::CalcTextSize("Name:").x;
+    const float settingsButtonWidth = ImGui::CalcTextSize("Settings").x +
+        ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float itemSpacing = ImGui::GetStyle().ItemSpacing.x;
+    const float rightEdge = ImGui::GetWindowContentRegionMax().x;
+    const float nameInputWidth = std::min(220.0f, std::max(120.0f,
+        rightEdge - ImGui::GetCursorPosX() - nameLabelWidth - settingsButtonWidth - itemSpacing * 2.0f));
+    const float nameRowWidth = nameLabelWidth + nameInputWidth + settingsButtonWidth + itemSpacing * 2.0f;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), rightEdge - nameRowWidth));
+    ImGui::TextUnformatted("Name:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(nameInputWidth);
+    const bool nameEnterPressed = ImGui::InputText("##ClientName", clientNameInput,
+                                                   sizeof(clientNameInput), ImGuiInputTextFlags_EnterReturnsTrue);
+    const bool nameChangedAndFinished = ImGui::IsItemDeactivatedAfterEdit();
+    if (nameEnterPressed || nameChangedAndFinished) {
+        settings.clientName = clientNameInput;
+        settings.saveToFile();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Settings", ImVec2(settingsButtonWidth, 0.0f))) {
+        settingsSidebarOpen = !settingsSidebarOpen;
     }
 
     ImGui::Separator();
@@ -536,6 +630,71 @@ void ClientRenderer::drawBoardSelectionScreen(BoardCommandHandler& commandHandle
     }
 }
 
+// Draws and saves client settings in a sidebar on the right side of the screen
+void ClientRenderer::drawSettingsSidebar(Settings& settings) {
+    const float sidebarWidth = 320.0f;
+    const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(displaySize.x - sidebarWidth, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displaySize.y), ImGuiCond_Always);
+
+    if (ImGui::Begin("Settings", &settingsSidebarOpen,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+        ImGui::TextUnformatted("Selection highlight color:");
+        float color[4] = {
+            settings.selectionColor[0] / 255.0f,
+            settings.selectionColor[1] / 255.0f,
+            settings.selectionColor[2] / 255.0f,
+            settings.selectionColor[3] / 255.0f
+        };
+        const bool colorChanged = ImGui::ColorEdit4("##SelectionColor", color);
+        const bool colorEditFinished = ImGui::IsItemDeactivatedAfterEdit();
+        if (colorChanged) {
+            for (size_t channelIndex = 0; channelIndex < settings.selectionColor.size(); ++channelIndex) {
+                const float channelValue = std::clamp(color[channelIndex] * 255.0f, 0.0f, 255.0f);
+                settings.selectionColor[channelIndex] = static_cast<uint8_t>(channelValue + 0.5f);
+            }
+        }
+        if (colorEditFinished) settings.saveToFile();
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Default card width:");
+        float cardWidth = settings.defaultCardWidth;
+        ImGui::SetNextItemWidth(-1.0f);
+        const bool cardWidthChanged = ImGui::InputFloat("##DefaultCardWidth", &cardWidth, 1.0f, 10.0f, "%.1f");
+        const bool cardWidthFinished = ImGui::IsItemDeactivatedAfterEdit();
+        if (cardWidthChanged) settings.defaultCardWidth = cardWidth;
+        if (cardWidthFinished) {
+            settings.defaultCardWidth = std::clamp(cardWidth, kMinCardSize, kMaxCardSize);
+            settings.saveToFile();
+        }
+
+        ImGui::TextUnformatted("Default card height:");
+        float cardHeight = settings.defaultCardHeight;
+        ImGui::SetNextItemWidth(-1.0f);
+        const bool cardHeightChanged = ImGui::InputFloat("##DefaultCardHeight", &cardHeight, 1.0f, 10.0f, "%.1f");
+        const bool cardHeightFinished = ImGui::IsItemDeactivatedAfterEdit();
+        if (cardHeightChanged) settings.defaultCardHeight = cardHeight;
+        if (cardHeightFinished) {
+            settings.defaultCardHeight = std::clamp(cardHeight, kMinCardSize, kMaxCardSize);
+            settings.saveToFile();
+        }
+
+        ImGui::TextUnformatted("Default connector thickness:");
+        float connectorThickness = settings.defaultConnectorThickness;
+        ImGui::SetNextItemWidth(-1.0f);
+        const bool connectorThicknessChanged = ImGui::InputFloat(
+            "##DefaultConnectorThickness", &connectorThickness, 0.1f, 1.0f, "%.1f");
+        const bool connectorThicknessFinished = ImGui::IsItemDeactivatedAfterEdit();
+        if (connectorThicknessChanged) settings.defaultConnectorThickness = connectorThickness;
+        if (connectorThicknessFinished) {
+            settings.defaultConnectorThickness = std::clamp(connectorThickness, 0.1f, 1000.0f);
+            settings.saveToFile();
+        }
+    }
+    ImGui::End();
+}
+
+// Adds dropped file paths to the renderer for the next input update
 void ClientRenderer::onFilesDropped(GLFWwindow* droppedWindow, int pathCount, const char* paths[]) {
     auto* renderer = static_cast<ClientRenderer*>(glfwGetWindowUserPointer(droppedWindow));
     if (!renderer) {
@@ -1206,7 +1365,8 @@ void ClientRenderer::handleConnectingMode(const BoardState& board, BoardCommandH
         // Leave on success so user can select another target after invalid
         if (board.cards.find(hoveredCardID) != board.cards.end() &&
             !board.connectorExistsBetween(connectingSourceCardID, hoveredCardID)) {
-            const CreateConnectorCommand command{connectingSourceCardID, hoveredCardID};
+            const CreateConnectorCommand command{connectingSourceCardID, hoveredCardID,
+                                                  board.user_settings.defaultConnectorThickness};
             previewChange(command);
             commandHandler.handle(command);
             isConnecting = false;
@@ -1301,6 +1461,40 @@ void ClientRenderer::syncSelection(const BoardState& localBoard) {
     }
 }
 
+// Sends packets only when objects enter or leave the local selection
+void ClientRenderer::syncObjectSelection(const BoardState& board, BoardCommandHandler& commandHandler) {
+    std::vector<ContextMenuTarget> currentSelection;
+    if (!showingBoardSelection && board.boardID != 0) {
+        currentSelection = selectedObjects;
+    }
+
+    const Color selectionColor = getSelectionColor(board.user_settings);
+    std::string clientName = board.user_settings.clientName;
+    if (clientName.empty()) clientName = "User";
+
+    for (const ContextMenuTarget& previous : reportedSelection) {
+        const bool stillSelected = std::any_of(currentSelection.begin(), currentSelection.end(),
+            [&](const ContextMenuTarget& current) { return sameSelection(previous, current); });
+        if (!stillSelected) {
+            const std::string objectType = previous.type == MenuContextType::Card ? "card" : "connector";
+            commandHandler.handle(SetObjectSelectionCommand{
+                objectType, previous.targetID, false, clientName, selectionColor});
+        }
+    }
+
+    for (const ContextMenuTarget& current : currentSelection) {
+        const bool wasSelected = std::any_of(reportedSelection.begin(), reportedSelection.end(),
+            [&](const ContextMenuTarget& previous) { return sameSelection(previous, current); });
+        if (!wasSelected) {
+            const std::string objectType = current.type == MenuContextType::Card ? "card" : "connector";
+            commandHandler.handle(SetObjectSelectionCommand{
+                objectType, current.targetID, true, clientName, selectionColor});
+        }
+    }
+
+    reportedSelection = currentSelection;
+}
+
 void ClientRenderer::handleContextMenu(const BoardState& board, BoardCommandHandler& commandHandler, const ContextMenuTarget& context) {
     if (ImGui::BeginPopup("BoardContextMenu")) {
 
@@ -1309,7 +1503,9 @@ void ClientRenderer::handleContextMenu(const BoardState& board, BoardCommandHand
             if (ImGui::MenuItem("Create Card")) {
                 float spawnX = contextMenuWorldPos.x;
                 float spawnY = contextMenuWorldPos.y;
-                commandHandler.handle(CreateCardCommand{spawnX, spawnY, "Enter text..."});
+                commandHandler.handle(CreateCardCommand{spawnX, spawnY, "Enter text...",
+                                                       board.user_settings.defaultCardWidth,
+                                                       board.user_settings.defaultCardHeight});
             }
 
             if (ImGui::MenuItem("Edit theme...")) {
@@ -1461,7 +1657,7 @@ void ClientRenderer::drawGrid(ImDrawList* draw_list, const BoardState& board, Im
 }
 
 void ClientRenderer::drawConnectors(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
-    const BoardTheme theme = inspector.displayTheme(board);
+    const Color localSelectionColor = getSelectionColor(board.user_settings);
     for (const auto& [id, conn] : board.connectors) {
         if (isPendingDelete(MenuContextType::Connector, conn.connectorID) ||
             isPendingDelete(MenuContextType::Card, conn.sourceCardID) ||
@@ -1481,14 +1677,41 @@ void ClientRenderer::drawConnectors(ImDrawList* draw_list, const BoardState& boa
         ImVec2 srcCenter = worldToScreen(srcGeometry.x + srcGeometry.width / 2.0f, srcGeometry.y + srcGeometry.height / 2.0f, boardCenter);
         ImVec2 tgtCenter = worldToScreen(tgtGeometry.x + tgtGeometry.width / 2.0f, tgtGeometry.y + tgtGeometry.height / 2.0f, boardCenter);
 
-        // Selected connectors get accent colored border (from theme)
+        // Draws the current client's highlight color below a selected connector
         if (isSelected(MenuContextType::Connector, conn.connectorID)) {
-            uint32_t accentColorIm = ThemeUtils::toImColor(theme.accentColor);
+            uint32_t accentColorIm = ThemeUtils::toImColor(localSelectionColor);
             draw_list->AddLine(srcCenter, tgtCenter, accentColorIm, (conn.thickness + 4.0f) * camera.zoom);
         }
 
         uint32_t connColorIm = ThemeUtils::toImColor(inspector.displayConnectorColor(conn));
         draw_list->AddLine(srcCenter, tgtCenter, connColorIm, conn.thickness * camera.zoom);
+
+        const float deltaX = tgtCenter.x - srcCenter.x;
+        const float deltaY = tgtCenter.y - srcCenter.y;
+        const float lineLength = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+        if (lineLength > 0.0f) {
+            const ImVec2 offsetDirection(-deltaY / lineLength, deltaX / lineLength);
+            int remoteIndex = 0;
+            for (const RemoteSelection& remote : remoteSelections) {
+                if (remote.target.type != MenuContextType::Connector ||
+                    remote.target.targetID != conn.connectorID) {
+                    continue;
+                }
+                ++remoteIndex;
+                const float offset = 4.0f * remoteIndex;
+                const ImVec2 remoteSource(srcCenter.x + offsetDirection.x * offset,
+                                          srcCenter.y + offsetDirection.y * offset);
+                const ImVec2 remoteTarget(tgtCenter.x + offsetDirection.x * offset,
+                                          tgtCenter.y + offsetDirection.y * offset);
+                draw_list->AddLine(remoteSource, remoteTarget,
+                                   ThemeUtils::toImColor(remote.color),
+                                   std::max(3.0f, conn.thickness * camera.zoom + 2.0f));
+                const ImVec2 labelPosition((remoteSource.x + remoteTarget.x) * 0.5f,
+                                           (remoteSource.y + remoteTarget.y) * 0.5f);
+                draw_list->AddText(labelPosition, ThemeUtils::toImColor(remote.color),
+                                   remote.clientName.c_str());
+            }
+        }
     }
 }
 
@@ -1540,6 +1763,7 @@ void ClientRenderer::drawConnectionPreview(ImDrawList* draw_list, const BoardSta
 
 void ClientRenderer::drawCards(ImDrawList* draw_list, const BoardState& board, ImVec2 boardCenter) {
     const BoardTheme theme = inspector.displayTheme(board);
+    const Color localSelectionColor = getSelectionColor(board.user_settings);
     std::vector<uint32_t> cardIDs = board.getCardIDsInZOrder();
     std::stable_partition(cardIDs.begin(), cardIDs.end(), [this](uint32_t cardID) {
         const bool isBeingMoved = cardID == draggedCardID || cardID == resizingCardID || hasPendingGeometry(cardID);
@@ -1567,7 +1791,7 @@ void ClientRenderer::drawCards(ImDrawList* draw_list, const BoardState& board, I
         const bool showingDropPreview = card.cardID == dropPreviewCardID;
         bool selected = isSelected(MenuContextType::Card, card.cardID);
         uint32_t borderCol = (selected || showingDropPreview)
-            ? ThemeUtils::toImColor(theme.accentColor)
+            ? ThemeUtils::toImColor(selected ? localSelectionColor : theme.accentColor)
             : ThemeUtils::toImColor(ThemeUtils::getCardBorder(cardColor));
         float borderThickness = (selected || showingDropPreview) ? 4.0f : 2.0f;
 
@@ -1592,7 +1816,7 @@ void ClientRenderer::drawCards(ImDrawList* draw_list, const BoardState& board, I
             }
         }
 
-        // Selected cards and active image drops use the accent outline.
+        // Draws the client highlight color or the active image drop outline
         draw_list->AddRect(cardMin, cardMax, borderCol, 6.0f, 0, borderThickness);
 
         if (showingDropPreview) {
@@ -1619,6 +1843,22 @@ void ClientRenderer::drawCards(ImDrawList* draw_list, const BoardState& board, I
             draw_list->PushClipRect(cardMin, cardMax, true);
             draw_list->AddText(ImGui::GetFont(), fontSize, ImVec2(cardMin.x + textPadding, cardMin.y + textPadding), textCol, card.text.c_str(), NULL, wrapWidth);
             draw_list->PopClipRect();
+        }
+
+        int remoteIndex = 0;
+        for (const RemoteSelection& remote : remoteSelections) {
+            if (remote.target.type != MenuContextType::Card || remote.target.targetID != card.cardID) {
+                continue;
+            }
+            ++remoteIndex;
+            const float outlinePadding = 2.0f + 3.0f * remoteIndex;
+            const ImVec2 outlineMin(cardMin.x - outlinePadding, cardMin.y - outlinePadding);
+            const ImVec2 outlineMax(cardMax.x + outlinePadding, cardMax.y + outlinePadding);
+            draw_list->AddRect(outlineMin, outlineMax, ThemeUtils::toImColor(remote.color),
+                               6.0f + outlinePadding, 0, 2.0f);
+            const float labelY = cardMin.y - ImGui::GetTextLineHeight() - outlinePadding;
+            draw_list->AddText(ImVec2(cardMin.x + outlinePadding, labelY),
+                               ThemeUtils::toImColor(remote.color), remote.clientName.c_str());
         }
     }
 

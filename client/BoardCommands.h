@@ -12,6 +12,8 @@ struct CreateCardCommand {
     float x;
     float y;
     std::string text;
+    float width;
+    float height;
 };
 
 struct DeleteCardCommand {
@@ -21,6 +23,7 @@ struct DeleteCardCommand {
 struct CreateConnectorCommand {
     uint32_t sourceCardID;
     uint32_t targetCardID;
+    float thickness;
 };
 
 struct DeleteConnectorCommand {
@@ -52,6 +55,15 @@ struct SetCardGeometryCommand {
 struct SetCardTextCommand {
     uint32_t cardID;
     std::string text;
+    uint64_t expectedTextRevision;
+};
+
+struct SetObjectSelectionCommand {
+    std::string objectType;
+    uint32_t objectID;
+    bool selected;
+    std::string clientName;
+    Color selectionColor;
 };
 
 struct SetCardImageCommand {
@@ -110,6 +122,7 @@ using BoardCommand = std::variant<
     CreateCardCommand,
     DeleteCardCommand,
     CreateConnectorCommand,
+    SetObjectSelectionCommand,
     DeleteConnectorCommand,
     DeleteObjectsCommand,
     SetCardGeometryCommand,

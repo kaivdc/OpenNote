@@ -6,6 +6,7 @@
 #include "ClientImageCache.h"
 #include "imgui.h"
 #include <string>
+#include <unordered_map>
 
 class BoardInspector {
 public:
@@ -14,6 +15,8 @@ public:
                      const ContextMenuTarget& selection, bool& sidebarOpen);
     // Sends a pending text edit before leaving the selected card
     void flushPendingText(const BoardState& board, BoardCommandHandler& commandHandler);
+    // Keeps a rejected text draft and displays the latest server version
+    void markTextConflict(uint32_t cardID, const std::string& serverText, uint64_t textRevision);
     void applyTheme(const BoardTheme& theme);
     void resetImageSourceEditor();
 
@@ -22,6 +25,20 @@ public:
     Color displayConnectorColor(const Connector& connector) const;
 
 private:
+    struct TextEditState {
+        std::string text;
+        std::string sentText;
+        std::string conflictText;
+        uint64_t baseRevision = 0;
+        uint64_t conflictRevision = 0;
+        double changedAt = 0.0;
+        int widgetRevision = 0;
+        bool initialized = false;
+        bool pending = false;
+        bool awaitingServerUpdate = false;
+        bool conflict = false;
+    };
+
     ThemeColor editingThemeColor = ThemeColor::BoardBackground;
     ObjectColorType editingObjectColorType = ObjectColorType::None;
     uint32_t editingObjectID = 0;
@@ -33,11 +50,7 @@ private:
     char imageUrlEditBuffer[2048] = {};
     std::string imageSourceError;
     uint32_t textEditCardID = 0;
-    std::string textEditBuffer;
-    std::string lastBoardText;
-    double textEditChangedAt = 0.0;
-    bool textEditPending = false;
-    bool textEditAwaitingServerUpdate = false;
+    std::unordered_map<uint32_t, TextEditState> textEdits;
 
     void openColorPicker(ThemeColor field, const Color& current);
     void openObjectColorPicker(ObjectColorType type, uint32_t objectID, const Color& current);

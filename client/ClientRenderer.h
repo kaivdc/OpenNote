@@ -38,6 +38,13 @@ private:
         float height = 0.0f;
     };
 
+    struct RemoteSelection {
+        int clientSocket = 0;
+        ContextMenuTarget target;
+        std::string clientName;
+        Color color;
+    };
+
     GLFWwindow* window = nullptr;
     Camera camera;
     uint32_t draggedCardID = 0;
@@ -81,10 +88,15 @@ private:
     uint32_t pendingDeleteBoardID = 0;
     std::string pendingDeleteBoardName;
     bool openDeleteBoardPopup = false;
+    bool settingsSidebarOpen = false;
+    char clientNameInput[MAX_CLIENT_NAME_LENGTH + 1] = {};
+    bool clientNameInputInitialized = false;
+    std::vector<ContextMenuTarget> reportedSelection;
+    std::vector<RemoteSelection> remoteSelections;
 
 public:
     GLFWwindow* initialize(int width, int height, const char* title);
-    void updateAndRender(const BoardState& board, BoardCommandHandler& commandHandler);
+    void updateAndRender(BoardState& board, BoardCommandHandler& commandHandler);
     // Replaces the boards shown by the board selection screen
     void setAvailableBoards(const BoardList& boardList);
     // Shows or hides the board selection screen
@@ -93,6 +105,15 @@ public:
     void clearSelection();
     // Shows an error from the server in the client window
     void showServerError(const std::string& message, bool saveBoardAsError = false);
+    // Stores the latest server text and revision for an editor conflict
+    void markTextConflict(uint32_t cardID, const std::string& serverText, uint64_t textRevision);
+    // Adds or updates an object selected by another client
+    void updateRemoteSelection(int clientSocket, const ContextMenuTarget& target, bool selected,
+                               const std::string& clientName, const Color& selectionColor);
+    // Removes the selections reported by a disconnected client
+    void clearRemoteSelections(int clientSocket);
+    // Removes every remote selection after a board snapshot is loaded
+    void clearRemoteSelections();
     // Updates the board name after a successful save response
     void confirmBoardSave(const std::string& boardName);
     // Adds a local preview for a board command while the server processes it
@@ -108,7 +129,9 @@ private:
     // Draws the context menu for the current target and handles board saving
     void handleContextMenu(const BoardState& board, BoardCommandHandler& commandHandler, const ContextMenuTarget& context);
     // Draws the server boards and lets the client request one
-    void drawBoardSelectionScreen(BoardCommandHandler& commandHandler);
+    void drawBoardSelectionScreen(BoardCommandHandler& commandHandler, Settings& settings);
+    // Draws and saves settings in a sidebar on the right side of the screen
+    void drawSettingsSidebar(Settings& settings);
     void drawImageTexture(ImDrawList* drawList, GLuint texture, ImVec2 min, ImVec2 max) const;
     void processDroppedFiles(const BoardState& board, BoardCommandHandler& commandHandler);
     static void onFilesDropped(GLFWwindow* window, int pathCount, const char* paths[]);
@@ -137,6 +160,7 @@ private:
     void setSelection(const ContextMenuTarget& target);
     void setMultipleSelection(const std::vector<ContextMenuTarget>& targets);
     void syncSelection(const BoardState& localBoard);
+    void syncObjectSelection(const BoardState& board, BoardCommandHandler& commandHandler);
     void updateSelectionSelection(const BoardState& board, ImVec2 boardCenter, bool backgroundHovered);
     void selectObjectsInSelection(const BoardState& localBoard, ImVec2 boardCenter);
     void deleteSelectedObjects(BoardCommandHandler& commandHandler);

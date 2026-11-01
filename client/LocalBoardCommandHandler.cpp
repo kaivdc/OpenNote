@@ -60,6 +60,8 @@ void LocalBoardCommandHandler::apply(const CreateCardCommand& command) {
     payload["x"] = command.x;
     payload["y"] = command.y;
     payload["text"] = command.text;
+    payload["width"] = command.width;
+    payload["height"] = command.height;
     sendBoardCommand(socket, OpCode::CREATE_CARD, payload);
 }
 
@@ -75,7 +77,19 @@ void LocalBoardCommandHandler::apply(const CreateConnectorCommand& command) {
     json payload;
     payload["sourceCardID"] = command.sourceCardID;
     payload["targetCardID"] = command.targetCardID;
+    payload["thickness"] = command.thickness;
     sendBoardCommand(socket, OpCode::CREATE_CONNECTOR, payload);
+}
+
+// Sends a user's selected object and highlight color to the server
+void LocalBoardCommandHandler::apply(const SetObjectSelectionCommand& command) {
+    json payload;
+    payload["objectType"] = command.objectType;
+    payload["objectID"] = command.objectID;
+    payload["selected"] = command.selected;
+    payload["clientName"] = command.clientName;
+    payload["selectionColor"] = command.selectionColor;
+    sendBoardCommand(socket, OpCode::OBJECT_SELECTION, payload);
 }
 
 // Sends a request to delete a connector from the board
@@ -112,6 +126,7 @@ void LocalBoardCommandHandler::apply(const SetCardTextCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
     payload["text"] = command.text;
+    payload["expectedTextRevision"] = command.expectedTextRevision;
     sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload);
 }
 

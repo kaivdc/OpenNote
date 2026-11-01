@@ -189,6 +189,11 @@ void clientReceivingLoop(long childSocket)
                             queueReceivedPacket(msgType, std::move(payloadStr));
                             break;
                         }
+                        case static_cast<uint8_t>(OpCode::OBJECT_SELECTION):
+                        {
+                            queueReceivedPacket(msgType, std::move(payloadStr));
+                            break;
+                        }
                         case static_cast<uint8_t>(OpCode::DISCONNECT): // DISCONNECT
                         {
                             std::cout << "[Client] : Received explicit DISCONNECT\n";
@@ -251,6 +256,7 @@ Card cardFromJSON(const json& cardJSON) {
     card.height = cardJSON.at("height").get<float>();
     card.zIndex = cardJSON.at("zIndex").get<uint32_t>();
     card.text = cardJSON.at("text").get<string>();
+    card.textRevision = cardJSON.value("textRevision", uint64_t{0});
     card.mediaURL = cardJSON.value("mediaURL", string{});
     card.color = cardJSON.at("color").get<Color>();
     return card;
@@ -349,6 +355,7 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                 if (replaceBoardFromSnapshot(board, snapshot)) {
                     commandHandler.setBoardReady(true);
                     renderer.clearSelection();
+                    renderer.clearRemoteSelections();
                     renderer.setBoardSelectionVisible(false);
                     cout << "[CLIENT] : Board snapshot loaded for Board ID " << board.boardID << "\n";
                 } else {
@@ -409,8 +416,33 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                 break;
             }
             case static_cast<uint8_t>(OpCode::CLIENT_DISCONNECTED): {
-                if (json::parse(packet.payload).value("boardID", 0u) != board.boardID) break;
+                const json payload = json::parse(packet.payload);
+                if (payload.value("boardID", 0u) != board.boardID) break;
+                if (payload.contains("clientSocket") && payload["clientSocket"].is_number_integer()) {
+                    renderer.clearRemoteSelections(payload["clientSocket"].get<int>());
+                }
                 cout << "[CLIENT] : Another client disconnected from the board.\n";
+                break;
+            }
+            case static_cast<uint8_t>(OpCode::OBJECT_SELECTION): {
+                const json payload = json::parse(packet.payload);
+                if (payload.value("boardID", 0u) != board.boardID) break;
+                const int clientSocket = payload.at("clientSocket").get<int>();
+                const string objectType = payload.at("objectType").get<string>();
+                const uint32_t objectID = payload.at("objectID").get<uint32_t>();
+                const bool selected = payload.at("selected").get<bool>();
+                const string clientName = payload.value("clientName", string("User"));
+                const Color selectionColor = payload.at("selectionColor").get<Color>();
+                MenuContextType selectionType;
+                if (objectType == "card") {
+                    selectionType = MenuContextType::Card;
+                } else if (objectType == "connector") {
+                    selectionType = MenuContextType::Connector;
+                } else {
+                    break;
+                }
+                renderer.updateRemoteSelection(clientSocket,
+                    ContextMenuTarget{selectionType, objectID}, selected, clientName, selectionColor);
                 break;
             }
             case static_cast<uint8_t>(OpCode::ERROR): {
@@ -418,6 +450,19 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
                 const string errorMessage = payload.value("errorMsg", string("Unknown server error."));
                 const string requestType = payload.value("requestType", string{});
                 const bool saveBoardError = requestType == "SAVE_BOARD_AS";
+                if (requestType == "EDIT_CARD_CONTENT" && payload.value("errCode", 0) == 409 &&
+                    payload.contains("cardID") && payload.contains("currentText") &&
+                    payload.contains("textRevision") && payload["currentText"].is_string()) {
+                    const uint32_t cardID = payload.at("cardID").get<uint32_t>();
+                    const string currentText = payload.at("currentText").get<string>();
+                    const uint64_t textRevision = payload.at("textRevision").get<uint64_t>();
+                    auto cardIt = board.cards.find(cardID);
+                    if (cardIt != board.cards.end()) {
+                        cardIt->second.text = currentText;
+                        cardIt->second.textRevision = textRevision;
+                        renderer.markTextConflict(cardID, currentText, textRevision);
+                    }
+                }
                 cerr << "[ERROR] : Server rejected a command: " << errorMessage << "\n";
                 renderer.showServerError(errorMessage, saveBoardError);
                 if (requestType == "SYNC_BOARD" || requestType == "CREATE_BOARD") {
@@ -460,6 +505,8 @@ void applyReceivedPacket(BoardState& board, LocalBoardCommandHandler& commandHan
 
               if (payload.contains("text"))
                 card.text = payload.at("text").get<string>();
+              if (payload.contains("textRevision"))
+                card.textRevision = payload.at("textRevision").get<uint64_t>();
               if (payload.contains("mediaURL"))
                 card.mediaURL = payload.at("mediaURL").get<string>();
               if (payload.contains("color"))

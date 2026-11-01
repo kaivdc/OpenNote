@@ -11,13 +11,13 @@ using std::vector;
 namespace {
 
 // Builds an error result for a rejected board command
-ServerBoardCommandResult commandError(int errorCode, const string& errorMessage) {
-    return {false, errorCode, errorMessage, string{}};
+ServerBoardCommandResult commandError(int errorCode, const string& errorMessage, const string& errorDetails = string{}) {
+    return {false, errorCode, errorMessage, string{}, errorDetails};
 }
 
 // Builds a successful result with the update payload to broadcast
 ServerBoardCommandResult commandSuccess(const string& updatePayload) {
-    return {true, 0, string{}, updatePayload};
+    return {true, 0, string{}, updatePayload, string{}};
 }
 
 // Applies valid red, green, blue, and alpha values from JSON to a color
@@ -76,7 +76,8 @@ json colorToJSON(const Color& targetColor) {
 json cardToJSON(const Card& card) {
     return {{"cardID", card.cardID}, {"x", card.x}, {"y", card.y},
             {"width", card.width}, {"height", card.height}, {"zIndex", card.zIndex},
-            {"text", card.text}, {"mediaURL", card.mediaURL}, {"color", colorToJSON(card.color)}};
+            {"text", card.text}, {"textRevision", card.textRevision},
+            {"mediaURL", card.mediaURL}, {"color", colorToJSON(card.color)}};
 }
 
 // Converts a connector into its JSON representation
@@ -189,9 +190,26 @@ ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed) {
         if (!jsonParsed["text"].is_string()) {
             return commandError(400, "Card text must be a string.");
         }
-        updatedCard.text = jsonParsed["text"].get<string>();
-        if (updatedCard.text.size() > MAX_CARD_TEXT_BYTES) {
+        const string newText = jsonParsed["text"].get<string>();
+        if (newText.size() > MAX_CARD_TEXT_BYTES) {
             return commandError(400, "Card text exceeds 4096 bytes.");
+        }
+        if (!jsonParsed.contains("expectedTextRevision") ||
+            !jsonParsed["expectedTextRevision"].is_number_unsigned()) {
+            return commandError(400, "Card text edit must include expectedTextRevision.");
+        }
+        const uint64_t expectedTextRevision = jsonParsed["expectedTextRevision"].get<uint64_t>();
+        if (expectedTextRevision != cardIt->second.textRevision) {
+            json conflictDetails = {
+                {"cardID", cardID},
+                {"currentText", cardIt->second.text},
+                {"textRevision", cardIt->second.textRevision}
+            };
+            return commandError(409, "Card text changed while it was being edited.", conflictDetails.dump());
+        }
+        if (newText != updatedCard.text) {
+            updatedCard.text = newText;
+            updatedCard.textRevision++;
         }
         cardChanged = true;
     }
@@ -226,6 +244,7 @@ ServerBoardCommandResult editCard(BoardState& board, const json& jsonParsed) {
     json updatedPayload = jsonParsed;
     updatedPayload["cardID"] = cardID;
     updatedPayload["zIndex"] = board.cards.at(cardID).zIndex;
+    updatedPayload["textRevision"] = board.cards.at(cardID).textRevision;
     if (mediaURLField) {
         updatedPayload["mediaURL"] = board.cards.at(cardID).mediaURL;
     }
@@ -443,7 +462,7 @@ ServerBoardCommandResult ServerBoardCommandProcessor::process(
     }
 
     try {
-        ServerBoardCommandResult commandResult{false, 400, "Unsupported board command.", string{}};
+        ServerBoardCommandResult commandResult{false, 400, "Unsupported board command.", string{}, string{}};
         switch (commandOpcode) {
             case OpCode::CREATE_CARD:
                 commandResult = createCard(board, jsonParsed);
