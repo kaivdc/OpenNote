@@ -756,14 +756,7 @@ int main(int argc, char *argv[])
     }
 
     // Ask the server for boards available to select
-    if (!sendPacket(s, static_cast<uint8_t>(OpCode::LIST_BOARDS), json::object().dump())) {
-        std::cerr << "[ERROR] : Failed to request board list.\n";
-        shutdown(s, SHUT_RDWR);
-        receivingThread.join();
-        close(s);
-        renderer.shutdown();
-        return 1;
-    }
+    localCommandHandler.handle(RefreshBoardListCommand{});
 
     // Main rendering loop
     auto nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(30);
@@ -773,17 +766,21 @@ int main(int argc, char *argv[])
             applyReceivedPacket(localBoard, localCommandHandler, renderer, pendingPackets.front());
             pendingPackets.pop();
         }
+        if (localCommandHandler.takeSaveAsSendFailure()) {
+            renderer.showServerError("Could not send save request.", true);
+        }
 
         renderer.updateAndRender(localBoard, localCommandHandler);
         if (std::chrono::steady_clock::now() >= nextHeartbeat) {
-            heartBeatPacket(s);
+            localCommandHandler.sendHeartbeat();
             nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         }
     }
 
-    if (!sendPacket(s, static_cast<uint8_t>(OpCode::DISCONNECT), json::object().dump())) {
+    if (!localCommandHandler.sendDisconnect()) {
         std::cerr << "[WARN] : Failed to send disconnect packet.\n";
     }
+    localCommandHandler.stopSending();
     shutdown(s, SHUT_WR);
     if (receivingThread.joinable())
     {

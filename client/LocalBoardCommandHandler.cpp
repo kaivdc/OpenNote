@@ -2,31 +2,100 @@
 #include "PacketCreation.h"
 
 #include <iostream>
+#include <utility>
 
-namespace {
+// Connects the handler to the server socket
+LocalBoardCommandHandler::LocalBoardCommandHandler(int socket) : socket(socket) {
+    sendingThread = std::thread(&LocalBoardCommandHandler::sendingLoop, this);
+}
 
-// Sends one board command to the server
-bool sendBoardCommand(int socket, OpCode opcode, const json& payload) {
-    if (!sendPacket(socket, static_cast<uint8_t>(opcode), payload.dump())) {
-        std::cerr << "[ERROR] : Failed to send board command.\n";
-        return false;
+// Stops the sender after queued packets have been sent
+LocalBoardCommandHandler::~LocalBoardCommandHandler() {
+    stopSending();
+}
+
+// Adds a board command to the outgoing packet queue
+bool LocalBoardCommandHandler::queueBoardCommand(OpCode opcode, const json& payload, bool isSaveAsRequest) {
+    return queuePacket(static_cast<uint8_t>(opcode), payload.dump(), isSaveAsRequest);
+}
+
+// Adds one packet to the outgoing queue
+bool LocalBoardCommandHandler::queuePacket(uint8_t opcode, string payload, bool isSaveAsRequest) {
+    {
+        std::lock_guard<std::mutex> lock(outgoingQueueMutex);
+        if (stoppingSender) {
+            return false;
+        }
+        outgoingPackets.push({opcode, std::move(payload), isSaveAsRequest});
     }
+    outgoingQueueChanged.notify_one();
     return true;
 }
 
-// Sends a save request with an optional board name
-bool sendSaveBoardRequest(int socket, const string& boardName) {
+// Sends queued packets one at a time without blocking the rendering thread
+void LocalBoardCommandHandler::sendingLoop() {
+    while (true) {
+        OutgoingPacket packet{};
+        {
+            std::unique_lock<std::mutex> lock(outgoingQueueMutex);
+            outgoingQueueChanged.wait(lock, [this] {
+                return stoppingSender || !outgoingPackets.empty();
+            });
+            if (outgoingPackets.empty()) {
+                return;
+            }
+            packet = std::move(outgoingPackets.front());
+            outgoingPackets.pop();
+        }
+
+        if (!sendPacket(socket, packet.opcode, packet.payload)) {
+            std::cerr << "[ERROR] : Failed to send packet.\n";
+            if (packet.isSaveAsRequest) {
+                std::lock_guard<std::mutex> lock(outgoingQueueMutex);
+                saveAsSendFailed = true;
+            }
+        }
+    }
+}
+
+// Stops the sender after it finishes queued packets
+void LocalBoardCommandHandler::stopSending() {
+    {
+        std::lock_guard<std::mutex> lock(outgoingQueueMutex);
+        stoppingSender = true;
+    }
+    outgoingQueueChanged.notify_one();
+    if (sendingThread.joinable()) {
+        sendingThread.join();
+    }
+}
+
+// Adds a heartbeat packet to the outgoing queue
+bool LocalBoardCommandHandler::sendHeartbeat() {
+    return queueBoardCommand(OpCode::HEARTBEAT, json::object());
+}
+
+// Adds a disconnect packet to the outgoing queue
+bool LocalBoardCommandHandler::sendDisconnect() {
+    return queueBoardCommand(OpCode::DISCONNECT, json::object());
+}
+
+// Returns whether a save-as packet failed to send
+bool LocalBoardCommandHandler::takeSaveAsSendFailure() {
+    std::lock_guard<std::mutex> lock(outgoingQueueMutex);
+    const bool sendFailed = saveAsSendFailed;
+    saveAsSendFailed = false;
+    return sendFailed;
+}
+
+// Adds a save request with an optional board name to the outgoing queue
+bool LocalBoardCommandHandler::sendSaveBoardRequest(const string& boardName, bool isSaveAsRequest) {
     json payload = json::object();
     if (!boardName.empty()) {
         payload["boardName"] = boardName;
     }
-    return sendBoardCommand(socket, OpCode::SAVE_BOARD, payload);
+    return queueBoardCommand(OpCode::SAVE_BOARD, payload, isSaveAsRequest);
 }
-
-}
-
-// Connects the handler to the server socket
-LocalBoardCommandHandler::LocalBoardCommandHandler(int socket) : socket(socket) {}
 
 // Sends the requested board command to the server
 void LocalBoardCommandHandler::handle(const BoardCommand& command) {
@@ -51,7 +120,7 @@ void LocalBoardCommandHandler::clearPendingBoardRequest() {
 // Sends a save-as request when the active board is ready
 bool LocalBoardCommandHandler::sendSaveBoardAs(const string& boardName) {
     if (!boardReady) return false;
-    return sendSaveBoardRequest(socket, boardName);
+    return sendSaveBoardRequest(boardName, true);
 }
 
 // Sends a card creation command so the server can assign its ID
@@ -62,14 +131,14 @@ void LocalBoardCommandHandler::apply(const CreateCardCommand& command) {
     payload["text"] = command.text;
     payload["width"] = command.width;
     payload["height"] = command.height;
-    sendBoardCommand(socket, OpCode::CREATE_CARD, payload);
+    queueBoardCommand(OpCode::CREATE_CARD, payload);
 }
 
 // Sends a request to delete a card from the board
 void LocalBoardCommandHandler::apply(const DeleteCardCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
-    sendBoardCommand(socket, OpCode::DELETE_CARD, payload);
+    queueBoardCommand(OpCode::DELETE_CARD, payload);
 }
 
 // Sends a connector creation command so the server can assign its ID
@@ -78,7 +147,7 @@ void LocalBoardCommandHandler::apply(const CreateConnectorCommand& command) {
     payload["sourceCardID"] = command.sourceCardID;
     payload["targetCardID"] = command.targetCardID;
     payload["thickness"] = command.thickness;
-    sendBoardCommand(socket, OpCode::CREATE_CONNECTOR, payload);
+    queueBoardCommand(OpCode::CREATE_CONNECTOR, payload);
 }
 
 // Sends a user's selected object and highlight color to the server
@@ -89,14 +158,14 @@ void LocalBoardCommandHandler::apply(const SetObjectSelectionCommand& command) {
     payload["selected"] = command.selected;
     payload["clientName"] = command.clientName;
     payload["selectionColor"] = command.selectionColor;
-    sendBoardCommand(socket, OpCode::OBJECT_SELECTION, payload);
+    queueBoardCommand(OpCode::OBJECT_SELECTION, payload);
 }
 
 // Sends a request to delete a connector from the board
 void LocalBoardCommandHandler::apply(const DeleteConnectorCommand& command) {
     json payload;
     payload["connectorID"] = command.connectorID;
-    sendBoardCommand(socket, OpCode::DELETE_CONNECTOR, payload);
+    queueBoardCommand(OpCode::DELETE_CONNECTOR, payload);
 }
 
 // Sends a request to delete the selected connectors and cards
@@ -107,7 +176,7 @@ void LocalBoardCommandHandler::apply(const DeleteObjectsCommand& command) {
         const string objectType = object.kind == BoardObjectRef::Kind::Connector ? "connector" : "card";
         payload["objects"].push_back({{"type", objectType}, {"id", object.id}});
     }
-    sendBoardCommand(socket, OpCode::DELETE_OBJECTS, payload);
+    queueBoardCommand(OpCode::DELETE_OBJECTS, payload);
 }
 
 // Sends a request to update a card's position and size
@@ -118,7 +187,7 @@ void LocalBoardCommandHandler::apply(const SetCardGeometryCommand& command) {
     payload["y"] = command.y;
     payload["width"] = command.width;
     payload["height"] = command.height;
-    sendBoardCommand(socket, OpCode::MOVE_CARD, payload);
+    queueBoardCommand(OpCode::MOVE_CARD, payload);
 }
 
 // Sends a request to update a card's text
@@ -127,7 +196,7 @@ void LocalBoardCommandHandler::apply(const SetCardTextCommand& command) {
     payload["cardID"] = command.cardID;
     payload["text"] = command.text;
     payload["expectedTextRevision"] = command.expectedTextRevision;
-    sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload);
+    queueBoardCommand(OpCode::EDIT_CARD_CONTENT, payload);
 }
 
 // Sends a request to update a card's image source
@@ -135,7 +204,7 @@ void LocalBoardCommandHandler::apply(const SetCardImageCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
     payload["mediaURL"] = command.imageSource;
-    sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload);
+    queueBoardCommand(OpCode::EDIT_CARD_CONTENT, payload);
 }
 
 // Sends a request to update a card's color
@@ -143,7 +212,7 @@ void LocalBoardCommandHandler::apply(const SetCardColorCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
     payload["color"] = command.color;
-    sendBoardCommand(socket, OpCode::EDIT_CARD_CONTENT, payload);
+    queueBoardCommand(OpCode::EDIT_CARD_CONTENT, payload);
 }
 
 // Sends a request to update a connector's thickness
@@ -151,7 +220,7 @@ void LocalBoardCommandHandler::apply(const SetConnectorThicknessCommand& command
     json payload;
     payload["connectorID"] = command.connectorID;
     payload["thickness"] = command.thickness;
-    sendBoardCommand(socket, OpCode::EDIT_CONNECTOR, payload);
+    queueBoardCommand(OpCode::EDIT_CONNECTOR, payload);
 }
 
 // Sends a request to update a connector's color
@@ -159,7 +228,7 @@ void LocalBoardCommandHandler::apply(const SetConnectorColorCommand& command) {
     json payload;
     payload["connectorID"] = command.connectorID;
     payload["color"] = command.color;
-    sendBoardCommand(socket, OpCode::EDIT_CONNECTOR, payload);
+    queueBoardCommand(OpCode::EDIT_CONNECTOR, payload);
 }
 
 // Sends a request to update a board theme color
@@ -177,19 +246,19 @@ void LocalBoardCommandHandler::apply(const SetBoardThemeColorCommand& command) {
     json payload;
     payload["field"] = fieldName;
     payload["color"] = command.color;
-    sendBoardCommand(socket, OpCode::EDIT_BOARD_THEME, payload);
+    queueBoardCommand(OpCode::EDIT_BOARD_THEME, payload);
 }
 
 // Sends a request to move a card to the front of the draw order
 void LocalBoardCommandHandler::apply(const BringCardToFrontCommand& command) {
     json payload;
     payload["cardID"] = command.cardID;
-    sendBoardCommand(socket, OpCode::BRING_CARD_TO_FRONT, payload);
+    queueBoardCommand(OpCode::BRING_CARD_TO_FRONT, payload);
 }
 
 // Requests that the server save the active board
 void LocalBoardCommandHandler::apply(const SaveBoardCommand& command) {
-    sendSaveBoardRequest(socket, command.boardName);
+    sendSaveBoardRequest(command.boardName);
 }
 
 // Requests a board snapshot and waits for the server to load it
@@ -197,7 +266,7 @@ void LocalBoardCommandHandler::apply(const JoinBoardCommand& command) {
     if (boardRequestPending) return;
     json payload;
     payload["boardID"] = command.boardID;
-    if (sendBoardCommand(socket, OpCode::SYNC_BOARD, payload)) {
+    if (queueBoardCommand(OpCode::SYNC_BOARD, payload)) {
         boardReady = false;
         boardRequestPending = true;
     }
@@ -205,12 +274,12 @@ void LocalBoardCommandHandler::apply(const JoinBoardCommand& command) {
 
 // Requests the names, IDs, and dates for boards available on the server
 void LocalBoardCommandHandler::apply(const RefreshBoardListCommand&) {
-    sendBoardCommand(socket, OpCode::LIST_BOARDS, json::object());
+    queueBoardCommand(OpCode::LIST_BOARDS, json::object());
 }
 
 // Requests a new board so the server can assign its ID
 void LocalBoardCommandHandler::apply(const CreateBoardCommand&) {
-    if (!boardRequestPending && sendBoardCommand(socket, OpCode::CREATE_BOARD, json::object())) {
+    if (!boardRequestPending && queueBoardCommand(OpCode::CREATE_BOARD, json::object())) {
         boardReady = false;
         boardRequestPending = true;
     }
@@ -220,5 +289,5 @@ void LocalBoardCommandHandler::apply(const CreateBoardCommand&) {
 void LocalBoardCommandHandler::apply(const DeleteBoardCommand& command) {
     json payload;
     payload["boardID"] = command.boardID;
-    sendBoardCommand(socket, OpCode::DELETE_BOARD, payload);
+    queueBoardCommand(OpCode::DELETE_BOARD, payload);
 }

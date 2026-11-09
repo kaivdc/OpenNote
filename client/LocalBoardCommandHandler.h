@@ -3,18 +3,45 @@
 
 #include "BoardCommands.h"
 
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+#include <thread>
+
 class LocalBoardCommandHandler final : public BoardCommandHandler {
 public:
     explicit LocalBoardCommandHandler(int socket);
+    ~LocalBoardCommandHandler();
     void handle(const BoardCommand& command) override;
     void setBoardReady(bool ready);
     void clearPendingBoardRequest();
     bool sendSaveBoardAs(const std::string& boardName) override;
+    bool sendHeartbeat();
+    bool sendDisconnect();
+    bool takeSaveAsSendFailure();
+    void stopSending();
 
 private:
+    struct OutgoingPacket {
+        uint8_t opcode;
+        std::string payload;
+        bool isSaveAsRequest;
+    };
+
     int socket;
     bool boardReady = true;
     bool boardRequestPending = false;
+    std::mutex outgoingQueueMutex;
+    std::condition_variable outgoingQueueChanged;
+    std::queue<OutgoingPacket> outgoingPackets;
+    std::thread sendingThread;
+    bool stoppingSender = false;
+    bool saveAsSendFailed = false;
+
+    bool queueBoardCommand(OpCode opcode, const nlohmann::json& payload, bool isSaveAsRequest = false);
+    bool queuePacket(uint8_t opcode, std::string payload, bool isSaveAsRequest = false);
+    bool sendSaveBoardRequest(const std::string& boardName, bool isSaveAsRequest = false);
+    void sendingLoop();
 
     void apply(const CreateCardCommand& command);
     void apply(const DeleteCardCommand& command);
